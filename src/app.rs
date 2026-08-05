@@ -49,6 +49,10 @@ pub enum Action {
     Exit,
     MoveUp,
     MoveDown,
+    PageUp,
+    PageDown,
+    MoveFirst,
+    MoveLast,
     ToggleMute,
     SetRelativeVolume(f32),
     SetDefault,
@@ -72,6 +76,10 @@ impl std::fmt::Display for Action {
             Action::SelectTab(tab) => write!(f, "Select {tab} tab"),
             Action::MoveUp => write!(f, "Move cursor up"),
             Action::MoveDown => write!(f, "Move cursor down"),
+            Action::PageUp => write!(f, "Move cursor up a page"),
+            Action::PageDown => write!(f, "Move cursor down a page"),
+            Action::MoveFirst => write!(f, "Move cursor to first item"),
+            Action::MoveLast => write!(f, "Move cursor to last item"),
             Action::TabLeft => write!(f, "Select previous tab"),
             Action::TabRight => write!(f, "Select next tab"),
             Action::CloseDropdown => write!(f, "Close menu"),
@@ -96,6 +104,13 @@ impl std::fmt::Display for Action {
 }
 
 impl Action {
+    // The help menu doesn't track how many lines actually fit on screen (it's
+    // computed inline at render time from the terminal area), so PageUp/
+    // PageDown there just jump a fixed number of lines rather than a true
+    // page - close enough for a scrollable overlay, and avoids threading
+    // layout information through for a fairly minor case.
+    const HELP_PAGE_STEP: u16 = 10;
+
     fn format_percentage(vol: f32) -> u16 {
         (vol * 100.0).trunc() as u16
     }
@@ -556,6 +571,27 @@ impl Handle for Action {
                     *help_position = help_position.saturating_sub(1);
                     return Ok(true);
                 }
+                Action::PageDown => {
+                    *help_position =
+                        help_position.saturating_add(Self::HELP_PAGE_STEP);
+                    return Ok(true);
+                }
+                Action::PageUp => {
+                    *help_position =
+                        help_position.saturating_sub(Self::HELP_PAGE_STEP);
+                    return Ok(true);
+                }
+                Action::MoveLast => {
+                    // Clamped to the real bottom by HelpWidget::render() -
+                    // see the "Fix help_position if we are scrolled beyond
+                    // the bottom of the list" comment there.
+                    *help_position = u16::MAX;
+                    return Ok(true);
+                }
+                Action::MoveFirst => {
+                    *help_position = 0;
+                    return Ok(true);
+                }
                 Action::ActivateDropdown
                 | Action::CloseDropdown
                 | Action::Help => {
@@ -584,6 +620,18 @@ impl Handle for Action {
             }
             Action::MoveUp => {
                 current_list!(app).up(&app.view);
+            }
+            Action::PageDown => {
+                current_list!(app).page_down(&app.view);
+            }
+            Action::PageUp => {
+                current_list!(app).page_up(&app.view);
+            }
+            Action::MoveFirst => {
+                current_list!(app).first(&app.view);
+            }
+            Action::MoveLast => {
+                current_list!(app).last(&app.view);
             }
             Action::TabLeft => {
                 app.current_tab_index = app
@@ -1018,6 +1066,48 @@ mod tests {
         assert_eq!(app.help_position, Some(1));
 
         assert!(Action::MoveUp.handle(&mut app).unwrap());
+        assert_eq!(app.help_position, Some(0));
+    }
+
+    #[test]
+    fn help_page_underflow() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+
+        assert!(Action::Help.handle(&mut app).unwrap());
+        assert_eq!(app.help_position, Some(0));
+
+        assert!(Action::PageUp.handle(&mut app).unwrap());
+        assert_eq!(app.help_position, Some(0));
+    }
+
+    #[test]
+    fn help_page_up_down() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+
+        assert!(Action::Help.handle(&mut app).unwrap());
+        assert_eq!(app.help_position, Some(0));
+
+        assert!(Action::PageDown.handle(&mut app).unwrap());
+        assert_eq!(app.help_position, Some(Action::HELP_PAGE_STEP));
+
+        assert!(Action::PageUp.handle(&mut app).unwrap());
+        assert_eq!(app.help_position, Some(0));
+    }
+
+    #[test]
+    fn help_first_last() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+
+        assert!(Action::Help.handle(&mut app).unwrap());
+        assert_eq!(app.help_position, Some(0));
+
+        assert!(Action::MoveLast.handle(&mut app).unwrap());
+        assert_eq!(app.help_position, Some(u16::MAX));
+
+        assert!(Action::MoveFirst.handle(&mut app).unwrap());
         assert_eq!(app.help_position, Some(0));
     }
 

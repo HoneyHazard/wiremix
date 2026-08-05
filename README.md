@@ -112,6 +112,10 @@ less-intuitive mouse controls are:
 | Esc           | Cancel dropdown         |
 | j/Down arrow  | Move down               |
 | k/Up arrow    | Move up                 |
+| PageDown      | Move down a page        |
+| PageUp        | Move up a page          |
+| End           | Move to last item       |
+| Home          | Move to first item      |
 | H/Shift+Tab   | Select previous tab     |
 | L/Tab         | Select next tab         |
 | ` (Backtick)  | Set volume 0%           |

@@ -29,6 +29,10 @@ impl Keybinding {
             (event(KeyCode::Down), Action::MoveDown),
             (event(KeyCode::Char('k')), Action::MoveUp),
             (event(KeyCode::Up), Action::MoveUp),
+            (event(KeyCode::PageDown), Action::PageDown),
+            (event(KeyCode::PageUp), Action::PageUp),
+            (event(KeyCode::End), Action::MoveLast),
+            (event(KeyCode::Home), Action::MoveFirst),
             (event(KeyCode::Char('H')), Action::TabLeft),
             (event(KeyCode::Char('L')), Action::TabRight),
             (

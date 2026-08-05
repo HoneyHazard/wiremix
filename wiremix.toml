@@ -101,6 +101,14 @@ keybindings = [
  # Select the previous item
  { key = { Char = "k" }, action = "MoveUp" },
  { key = "Up", action = "MoveUp" },
+ # Select the item a page down (however many items are visible at once)
+ { key = "PageDown", action = "PageDown" },
+ # Select the item a page up
+ { key = "PageUp", action = "PageUp" },
+ # Select the last item
+ { key = "End", action = "MoveLast" },
+ # Select the first item
+ { key = "Home", action = "MoveFirst" },
  # Select the next tab
  { key = { Char = "L" }, action = "TabRight" },
  { key = "Tab", action = "TabRight" },

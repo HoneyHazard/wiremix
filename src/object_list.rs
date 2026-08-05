@@ -39,6 +39,11 @@ pub struct ObjectList {
     pub dropdown_state: ListState,
     /// Targets
     pub targets: Vec<(view::Target, String)>,
+    /// Number of objects visible at once, as of the last `update()` call.
+    /// Cached here (rather than threaded into every action handler) since
+    /// it only changes on terminal resize and `update()` already recomputes
+    /// it every frame from the current area.
+    page_size: usize,
 }
 
 impl ObjectList {
@@ -71,6 +76,68 @@ impl ObjectList {
             if new_selected.is_some() {
                 self.select(new_selected);
             }
+        }
+    }
+
+    /// Move the selection down by a page (however many objects are visible
+    /// at once), or to the last object if fewer than a page remain. Leaves
+    /// the dropdown selection to select_next() the same as `down()`, since
+    /// a "page" of dropdown targets isn't a meaningful concept - dropdowns
+    /// are always small.
+    pub fn page_down(&mut self, view: &view::View) {
+        if self.dropdown_state.selected().is_some() {
+            self.dropdown_state.select_next();
+            return;
+        }
+        let mut new_selected = self.selected;
+        for _ in 0..self.page_size.max(1) {
+            match view.next_id(self.list_kind, new_selected) {
+                Some(id) => new_selected = Some(id),
+                None => break,
+            }
+        }
+        if new_selected.is_some() {
+            self.select(new_selected);
+        }
+    }
+
+    /// Move the selection up by a page. See `page_down()`.
+    pub fn page_up(&mut self, view: &view::View) {
+        if self.dropdown_state.selected().is_some() {
+            self.dropdown_state.select_previous();
+            return;
+        }
+        let mut new_selected = self.selected;
+        for _ in 0..self.page_size.max(1) {
+            match view.previous_id(self.list_kind, new_selected) {
+                Some(id) => new_selected = Some(id),
+                None => break,
+            }
+        }
+        if new_selected.is_some() {
+            self.select(new_selected);
+        }
+    }
+
+    /// Jump the selection straight to the first object in the list.
+    pub fn first(&mut self, view: &view::View) {
+        if self.dropdown_state.selected().is_some() {
+            self.dropdown_state.select_first();
+            return;
+        }
+        if let Some(&id) = view.object_ids(self.list_kind).first() {
+            self.select(Some(id));
+        }
+    }
+
+    /// Jump the selection straight to the last object in the list.
+    pub fn last(&mut self, view: &view::View) {
+        if self.dropdown_state.selected().is_some() {
+            self.dropdown_state.select_last();
+            return;
+        }
+        if let Some(&id) = view.object_ids(self.list_kind).last() {
+            self.select(Some(id));
         }
     }
 
@@ -265,6 +332,7 @@ impl ObjectList {
         let objects_len = view.len(self.list_kind);
 
         let visible_count = self.visible_count(&area);
+        self.page_size = visible_count;
 
         // If objects were removed and the viewport is now below the visible
         // objects, move the viewport up so that the bottom of the object list
@@ -689,6 +757,95 @@ mod tests {
         object_list.update(rect, &view);
         assert_eq!(object_list.top, 7);
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(10)));
+    }
+
+    #[test]
+    fn object_list_page_down_page_up() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+        );
+
+        let height = NodeWidget::height() + NodeWidget::spacing();
+        // + 2 for header and footer; 3 items visible at once
+        let rect = Rect::new(0, 0, 80, height * 3 + 2);
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+
+        // Select first object, and let update() compute page_size (3) from
+        // the 3-item-tall rect above.
+        object_list.down(&view);
+        object_list.update(rect, &view);
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
+
+        object_list.page_down(&view);
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(4)));
+
+        object_list.page_up(&view);
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
+    }
+
+    #[test]
+    fn object_list_page_down_overflow() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+        );
+
+        let height = NodeWidget::height() + NodeWidget::spacing();
+        let rect = Rect::new(0, 0, 80, height * 3 + 2);
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+
+        object_list.down(&view);
+        object_list.update(rect, &view);
+
+        // Page down well past the last of the 10 mock nodes.
+        for _ in 0..10 {
+            object_list.page_down(&view);
+            object_list.update(rect, &view);
+        }
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(10)));
+
+        for _ in 0..10 {
+            object_list.page_up(&view);
+            object_list.update(rect, &view);
+        }
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
+    }
+
+    #[test]
+    fn object_list_first_last() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+        );
+
+        let height = NodeWidget::height() + NodeWidget::spacing();
+        let rect = Rect::new(0, 0, 80, height * 3 + 2);
+        let mut object_list =
+            ObjectList::new(ListKind::Node(NodeKind::All), None);
+
+        // Start in the middle of the 10 mock nodes.
+        object_list.down(&view);
+        object_list.update(rect, &view);
+        object_list.page_down(&view);
+        object_list.update(rect, &view);
+
+        object_list.last(&view);
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(10)));
+
+        object_list.first(&view);
+        assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
     }
 
     #[test]
