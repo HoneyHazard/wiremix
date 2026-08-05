@@ -163,9 +163,15 @@ keybindings = [
  { key = { Char = "0" }, action = { SetAbsoluteVolume = 1.00 } },
  # Open the help menu
  { key = { Char = "?" }, action = "Help" },
- # There are two actions which don't have default bindings:
- # 1. "Nothing": Do nothing - can effectively delete a default keybinding
- # 2. { SelectTab = N }: Open the Nth tab
+ # Select a tab by position (Playback/Recording/Output/Input/Configuration,
+ # or whatever order/subset `tabs` above is set to)
+ { key = { F = 1 }, action = { SelectTab = 0 } },
+ { key = { F = 2 }, action = { SelectTab = 1 } },
+ { key = { F = 3 }, action = { SelectTab = 2 } },
+ { key = { F = 4 }, action = { SelectTab = 3 } },
+ { key = { F = 5 }, action = { SelectTab = 4 } },
+ # "Nothing" is an action with no default binding - it can be used to
+ # effectively delete a default keybinding by rebinding its key to it
 ]
 
 

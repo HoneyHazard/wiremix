@@ -40,6 +40,16 @@ impl Keybinding {
                 Action::TabLeft,
             ),
             (event(KeyCode::Tab), Action::TabRight),
+            // F1-F5 jump straight to a tab by position, regardless of how
+            // many tabs are actually configured - SelectTab already
+            // silently no-ops on an out-of-range index (see
+            // Action::handle), so binding all 5 unconditionally is safe
+            // even with `tabs` set to fewer than 5 entries.
+            (event(KeyCode::F(1)), Action::SelectTab(0)),
+            (event(KeyCode::F(2)), Action::SelectTab(1)),
+            (event(KeyCode::F(3)), Action::SelectTab(2)),
+            (event(KeyCode::F(4)), Action::SelectTab(3)),
+            (event(KeyCode::F(5)), Action::SelectTab(4)),
             (event(KeyCode::Char('`')), Action::SetAbsoluteVolume(0.00)),
             (event(KeyCode::Char('1')), Action::SetAbsoluteVolume(0.10)),
             (event(KeyCode::Char('2')), Action::SetAbsoluteVolume(0.20)),
@@ -125,5 +135,24 @@ impl Keybinding {
         }
 
         bindings
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fkey_defaults_select_tabs_by_position() {
+        let defaults = Keybinding::defaults();
+        let event = |code| KeyEvent::new(code, KeyModifiers::NONE);
+
+        for (fkey, tab_index) in [(1, 0), (2, 1), (3, 2), (4, 3), (5, 4)] {
+            assert_eq!(
+                defaults.get(&event(KeyCode::F(fkey))),
+                Some(&Action::SelectTab(tab_index)),
+                "F{fkey} should default to selecting tab {tab_index}"
+            );
+        }
     }
 }

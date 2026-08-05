@@ -118,6 +118,7 @@ less-intuitive mouse controls are:
 | Home          | Move to first item      |
 | H/Shift+Tab   | Select previous tab     |
 | L/Tab         | Select next tab         |
+| F1-F5         | Select tab by position  |
 | ` (Backtick)  | Set volume 0%           |
 | 1             | Set volume 10%          |
 | 2             | Set volume 20%          |
@@ -187,14 +188,23 @@ keybindings = [
 ]
 ```
 
+F1-F5 already select a tab by position by default. To remap that to
+different keys instead (e.g. if F-keys are intercepted by your terminal or
+window manager):
+
 ```toml
 keybindings = [
- # Use F-keys to select tabs
- { key = { F = 1 }, action = { SelectTab = 0 } },
- { key = { F = 2 }, action = { SelectTab = 1 } },
- { key = { F = 3 }, action = { SelectTab = 2 } },
- { key = { F = 4 }, action = { SelectTab = 3 } },
- { key = { F = 5 }, action = { SelectTab = 4 } },
+ # Free up F1-F5 and use Alt+1 through Alt+5 for tab selection instead
+ { key = { F = 1 }, action = "Nothing" },
+ { key = { F = 2 }, action = "Nothing" },
+ { key = { F = 3 }, action = "Nothing" },
+ { key = { F = 4 }, action = "Nothing" },
+ { key = { F = 5 }, action = "Nothing" },
+ { key = { Char = "1" }, modifiers = "ALT", action = { SelectTab = 0 } },
+ { key = { Char = "2" }, modifiers = "ALT", action = { SelectTab = 1 } },
+ { key = { Char = "3" }, modifiers = "ALT", action = { SelectTab = 2 } },
+ { key = { Char = "4" }, modifiers = "ALT", action = { SelectTab = 3 } },
+ { key = { Char = "5" }, modifiers = "ALT", action = { SelectTab = 4 } },
 ]
 ```
 
