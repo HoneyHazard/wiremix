@@ -44,6 +44,18 @@ enforce_max_volume = false
 # If true, only monitor peak levels of visible nodes
 lazy_capture = false
 
+# Cap how many nodes have their peak levels actively monitored at once. If
+# more nodes than this are eligible for capture (all visible nodes under
+# lazy_capture, or every capturable node otherwise), which ones are actually
+# captured rotates every few seconds so each eventually gets sampled, rather
+# than whichever nodes happened to become eligible first holding their slot
+# indefinitely. Meters for nodes not currently in the active set keep
+# showing their last captured value until their next turn. Unset by default
+# (no cap) - each additional concurrent capture is a real PipeWire stream
+# the session manager has to track, so on a system with many concurrent
+# streams/devices this is the most direct way to bound that cost.
+#max_concurrent_captures = 8
+
 
 # Keybindings
 #

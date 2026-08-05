@@ -229,6 +229,12 @@ pub struct App<'a> {
     capturable_objects: HashSet<ObjectId>,
     /// Objects currently being captured.
     capturing_objects: HashSet<ObjectId>,
+    /// Index into the sorted eligible-objects list where the next capture
+    /// rotation window should start. Only meaningful when
+    /// config.max_concurrent_captures is set.
+    capture_rotation_start: usize,
+    /// When the capture rotation window last advanced.
+    last_capture_rotation: Instant,
 }
 
 macro_rules! current_list {
@@ -276,6 +282,8 @@ impl<'a> App<'a> {
             peak_processor: Arc::new(peak_processor),
             capturable_objects: HashSet::new(),
             capturing_objects: HashSet::new(),
+            capture_rotation_start: 0,
+            last_capture_rotation: Instant::now(),
         }
     }
 
@@ -315,6 +323,12 @@ impl<'a> App<'a> {
                 self.visible_objects = new_visible_objects;
                 self.update_capturing();
             }
+
+            // Runs every iteration (not just on visibility change) since
+            // rotation is time-driven, not scroll-driven. Cheap to call when
+            // there's nothing to do - an elapsed-time check and, usually, an
+            // early return.
+            self.rotate_capturing();
 
             if needs_render && pacer.is_time_to_render() {
                 needs_render = false;
@@ -366,6 +380,18 @@ impl<'a> App<'a> {
             && !self.visible_objects.contains(&object_id)
         {
             return;
+        }
+
+        // Hard cap on concurrent captures, enforced here (not just in the
+        // rotation logic) so it can never be transiently exceeded - e.g. by
+        // several nodes becoming capture-eligible at once before the next
+        // rotation tick has a chance to run.
+        if let Some(max) = self.config.max_concurrent_captures {
+            if self.capturing_objects.len() >= max
+                && !self.capturing_objects.contains(&object_id)
+            {
+                return;
+            }
         }
 
         let Some(node) = self.state.nodes.get(&object_id) else {
@@ -429,6 +455,81 @@ impl<'a> App<'a> {
             .collect();
         for object_id in need_to_stop {
             self.stop_capture(object_id);
+        }
+    }
+
+    /// How often to swap which nodes are actively captured when
+    /// max_concurrent_captures limits capture to fewer than are eligible.
+    /// Deliberately much slower than typical UI/render cadence - rotating on
+    /// every frame would create more PipeWire stream churn than not
+    /// rotating at all, defeating the purpose of capping concurrency in the
+    /// first place.
+    const CAPTURE_ROTATION_INTERVAL: Duration = Duration::from_secs(3);
+
+    /// If max_concurrent_captures is set and more objects are eligible for
+    /// capture than that, periodically swap which subset is actually being
+    /// captured so every eligible object eventually gets sampled instead of
+    /// whichever ones happened to become eligible first (and then stay
+    /// captured forever, starving everything else).
+    fn rotate_capturing(&mut self) {
+        let Some(max) = self.config.max_concurrent_captures else {
+            return;
+        };
+
+        if self.last_capture_rotation.elapsed()
+            < Self::CAPTURE_ROTATION_INTERVAL
+        {
+            return;
+        }
+
+        // Same eligibility rule start_capture()/update_capturing() already
+        // use: scoped to on-screen objects under lazy_capture, otherwise
+        // every capturable object regardless of visibility.
+        let mut eligible: Vec<ObjectId> = if self.config.lazy_capture {
+            self.visible_objects
+                .intersection(&self.capturable_objects)
+                .copied()
+                .collect()
+        } else {
+            self.capturable_objects.iter().copied().collect()
+        };
+
+        if eligible.len() <= max {
+            // Everything eligible already fits under the cap - nothing to
+            // rotate. Leave last_capture_rotation alone so a rotation isn't
+            // "owed" the moment the eligible set grows past max again.
+            return;
+        }
+
+        self.last_capture_rotation = Instant::now();
+
+        // Sorting gives a stable, deterministic rotation order across ticks
+        // (HashSet iteration order isn't stable) so each tick advances
+        // through the *same* sequence rather than picking an arbitrary new
+        // subset every time.
+        eligible.sort_unstable();
+
+        let n = eligible.len();
+        let start = self.capture_rotation_start % n;
+        let window: HashSet<ObjectId> =
+            (0..max.min(n)).map(|i| eligible[(start + i) % n]).collect();
+        self.capture_rotation_start = (start + max) % n;
+
+        let need_to_stop: Vec<_> = self
+            .capturing_objects
+            .difference(&window)
+            .copied()
+            .collect();
+        for object_id in need_to_stop {
+            self.stop_capture(object_id);
+        }
+
+        let need_to_start: Vec<_> = window
+            .difference(&self.capturing_objects)
+            .copied()
+            .collect();
+        for object_id in need_to_start {
+            self.start_capture(object_id);
         }
     }
 
@@ -930,6 +1031,7 @@ mod tests {
             tabs: vec![TabKind::Playback],
             lazy_capture: Default::default(),
             filters: Default::default(),
+            max_concurrent_captures: Default::default(),
         };
 
         let mut app = App::new(wirehose, event_rx, config);
@@ -1031,6 +1133,7 @@ mod tests {
             ],
             lazy_capture: Default::default(),
             filters: Default::default(),
+            max_concurrent_captures: Default::default(),
         };
         let mut app = App::new(&wirehose, event_rx, config);
 
@@ -1360,5 +1463,112 @@ mod tests {
             commands.borrow_mut().pop_front(),
             Some(mock::MockCommand::NodeCaptureStop(id))
         );
+    }
+
+    /// Back-dates last_capture_rotation so the next rotate_capturing() call
+    /// doesn't have to wait out the real interval.
+    fn force_rotation_due(app: &mut App<'_>) {
+        app.last_capture_rotation = std::time::Instant::now()
+            .checked_sub(App::CAPTURE_ROTATION_INTERVAL * 2)
+            .unwrap();
+    }
+
+    #[test]
+    fn start_capture_enforces_max_concurrent() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let (_, event_rx) = mpsc::channel();
+        let config = Config::from_toml_str(
+            "lazy_capture = false\nmax_concurrent_captures = 2",
+        );
+        let mut app = App::new(&wirehose, event_rx, config);
+
+        for i in 1..=3 {
+            let id = ObjectId::from_raw_id(i);
+            add_capturable_node(&mut app, id);
+            app.set_capture_eligibility(CaptureEligibility::Eligible(id));
+        }
+
+        // Only 2 of the 3 eligible nodes should actually be capturing.
+        assert_eq!(app.capturing_objects.len(), 2);
+    }
+
+    #[test]
+    fn rotate_capturing_respects_max() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let (_, event_rx) = mpsc::channel();
+        let config = Config::from_toml_str(
+            "lazy_capture = true\nmax_concurrent_captures = 2",
+        );
+        let mut app = App::new(&wirehose, event_rx, config);
+
+        for i in 1..=5 {
+            let id = ObjectId::from_raw_id(i);
+            add_capturable_node(&mut app, id);
+            app.capturable_objects.insert(id);
+            app.visible_objects.insert(id);
+        }
+
+        force_rotation_due(&mut app);
+        app.rotate_capturing();
+
+        assert_eq!(app.capturing_objects.len(), 2);
+    }
+
+    #[test]
+    fn rotate_capturing_advances_window() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let (_, event_rx) = mpsc::channel();
+        let config = Config::from_toml_str(
+            "lazy_capture = true\nmax_concurrent_captures = 2",
+        );
+        let mut app = App::new(&wirehose, event_rx, config);
+
+        for i in 1..=5 {
+            let id = ObjectId::from_raw_id(i);
+            add_capturable_node(&mut app, id);
+            app.capturable_objects.insert(id);
+            app.visible_objects.insert(id);
+        }
+
+        force_rotation_due(&mut app);
+        app.rotate_capturing();
+        let first_window = app.capturing_objects.clone();
+
+        force_rotation_due(&mut app);
+        app.rotate_capturing();
+        let second_window = app.capturing_objects.clone();
+
+        assert_eq!(first_window.len(), 2);
+        assert_eq!(second_window.len(), 2);
+        assert_ne!(first_window, second_window);
+    }
+
+    #[test]
+    fn rotate_capturing_noop_under_cap() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let (_, event_rx) = mpsc::channel();
+        let config = Config::from_toml_str(
+            "lazy_capture = true\nmax_concurrent_captures = 10",
+        );
+        let mut app = App::new(&wirehose, event_rx, config);
+
+        for i in 1..=3 {
+            let id = ObjectId::from_raw_id(i);
+            add_capturable_node(&mut app, id);
+            app.capturable_objects.insert(id);
+            app.visible_objects.insert(id);
+            app.set_capture_eligibility(CaptureEligibility::Eligible(id));
+        }
+
+        force_rotation_due(&mut app);
+        app.rotate_capturing();
+
+        // Fewer eligible nodes than the cap - everything stays captured,
+        // nothing gets rotated out.
+        assert_eq!(app.capturing_objects.len(), 3);
     }
 }

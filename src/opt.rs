@@ -78,6 +78,14 @@ pub struct Opt {
     #[clap(long, conflicts_with = "no_lazy_capture")]
     pub lazy_capture: bool,
 
+    /// Cap how many nodes have their peak levels actively monitored at once,
+    /// rotating which ones are captured every few seconds if more than this
+    /// many are eligible (further reduces CPU usage on systems with many
+    /// concurrent streams/devices, at the cost of meters updating less often
+    /// per node)
+    #[clap(long, value_name = "COUNT")]
+    pub max_concurrent_captures: Option<usize>,
+
     #[cfg(debug_assertions)]
     #[clap(short, long)]
     pub dump_events: bool,
