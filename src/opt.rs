@@ -93,6 +93,14 @@ pub struct Opt {
     #[clap(long, value_name = "COUNT")]
     pub max_concurrent_captures_global: Option<usize>,
 
+    /// Hide the divider line between items
+    #[clap(long, conflicts_with = "show_dividers")]
+    pub no_show_dividers: bool,
+
+    /// Draw a divider line between items
+    #[clap(long, conflicts_with = "no_show_dividers")]
+    pub show_dividers: bool,
+
     #[cfg(debug_assertions)]
     #[clap(short, long)]
     pub dump_events: bool,

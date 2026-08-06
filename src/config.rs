@@ -38,6 +38,7 @@ pub struct Config {
     pub theme: Theme,
     pub row_selected_extend_above: bool,
     pub row_selected_extend_below: bool,
+    pub show_dividers: bool,
     pub max_volume_percent: f32,
     pub enforce_max_volume: bool,
     pub keybindings: HashMap<KeyEvent, Action>,
@@ -72,6 +73,8 @@ struct ConfigFile {
     row_selected_extend_above: bool,
     #[serde(default = "default_row_selected_extend")]
     row_selected_extend_below: bool,
+    #[serde(default = "default_show_dividers")]
+    show_dividers: bool,
     #[serde(default = "default_max_volume_percent")]
     max_volume_percent: Option<f32>,
     #[serde(default = "default_enforce_max_volume")]
@@ -161,6 +164,7 @@ pub struct CharSet {
     pub tab_marker_left: String,
     pub tab_marker_right: String,
     pub list_more: String,
+    pub divider: String,
     pub volume_empty: String,
     pub volume_filled: String,
     pub meter_left_inactive: String,
@@ -191,6 +195,7 @@ pub struct Theme {
     pub tab_selected: Style,
     pub tab_marker: Style,
     pub list_more: Style,
+    pub divider: Style,
     pub node_title: Style,
     pub node_target: Style,
     pub volume: Style,
@@ -286,6 +291,10 @@ fn default_row_selected_extend() -> bool {
     false
 }
 
+fn default_show_dividers() -> bool {
+    false
+}
+
 impl ConfigFile {
     /// Override configuration with command-line arguments.
     pub fn apply_opt(&mut self, opt: &Opt) {
@@ -355,6 +364,14 @@ impl ConfigFile {
             self.max_concurrent_captures_global =
                 Some(*max_concurrent_captures_global);
         }
+
+        if opt.no_show_dividers {
+            self.show_dividers = false;
+        }
+
+        if opt.show_dividers {
+            self.show_dividers = true;
+        }
     }
 }
 
@@ -419,6 +436,7 @@ impl TryFrom<ConfigFile> for Config {
             theme,
             row_selected_extend_above: config_file.row_selected_extend_above,
             row_selected_extend_below: config_file.row_selected_extend_below,
+            show_dividers: config_file.show_dividers,
             keybindings: config_file.keybindings,
             help,
             names: config_file.names,
@@ -503,6 +521,7 @@ pub mod strict {
         theme: String,
         row_selected_extend_above: bool,
         row_selected_extend_below: bool,
+        show_dividers: bool,
         max_volume_percent: Option<f32>,
         enforce_max_volume: bool,
         #[serde(deserialize_with = "keybindings")]
@@ -531,6 +550,7 @@ pub mod strict {
                 theme: strict.theme,
                 row_selected_extend_above: strict.row_selected_extend_above,
                 row_selected_extend_below: strict.row_selected_extend_below,
+                show_dividers: strict.show_dividers,
                 max_volume_percent: strict.max_volume_percent,
                 enforce_max_volume: strict.enforce_max_volume,
                 keybindings: strict.keybindings,

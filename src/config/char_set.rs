@@ -21,6 +21,7 @@ pub struct CharSetOverlay {
     tab_marker_left: Option<String>,
     tab_marker_right: Option<String>,
     list_more: Option<String>,
+    divider: Option<String>,
     volume_empty: Option<String>,
     volume_filled: Option<String>,
     meter_left_inactive: Option<String>,
@@ -103,6 +104,7 @@ impl TryFrom<CharSetOverlay> for CharSet {
         validate_and_set!(tab_marker_left, 1);
         validate_and_set!(tab_marker_right, 1);
         validate_and_set!(list_more, 0);
+        validate_and_set!(divider, 1);
         validate_and_set!(volume_empty, 1);
         validate_and_set!(volume_filled, 1);
         validate_and_set!(meter_left_inactive, 1);
@@ -143,6 +145,7 @@ impl Default for CharSet {
             tab_marker_left: String::from("["),
             tab_marker_right: String::from("]"),
             list_more: String::from("•••"),
+            divider: String::from("─"),
             volume_empty: String::from("╌"),
             volume_filled: String::from("━"),
             meter_left_inactive: String::from("▮"),
@@ -184,6 +187,7 @@ impl CharSet {
             tab_marker_left: String::from("["),
             tab_marker_right: String::from("]"),
             list_more: String::from("•••"),
+            divider: String::from("─"),
             volume_empty: String::from("─"),
             volume_filled: String::from("━"),
             meter_left_inactive: String::from("┃"),
@@ -215,6 +219,7 @@ impl CharSet {
             tab_marker_left: String::from("["),
             tab_marker_right: String::from("]"),
             list_more: String::from("~~~"),
+            divider: String::from("-"),
             volume_empty: String::from("-"),
             volume_filled: String::from("="),
             meter_left_inactive: String::from("="),

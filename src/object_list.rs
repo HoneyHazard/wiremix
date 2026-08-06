@@ -475,6 +475,39 @@ fn extend_selected_row(
     }
 }
 
+/// Draws a one-row divider line spanning `object_area`'s width, in the gap
+/// immediately below it, when `config.show_dividers` is set. A no-op
+/// (nothing drawn, no space reserved) when it isn't - dividers only ever
+/// use space that the existing gap between items (NodeWidget::spacing()/
+/// DeviceWidget::spacing()) already reserves, so turning this on never
+/// changes the list's layout, only what's drawn in space that was already
+/// blank. Clipped to `list_area` so it can never bleed into a neighboring
+/// item or past the list into the footer/tab bar.
+fn render_divider(
+    buf: &mut Buffer,
+    config: &Config,
+    object_area: Rect,
+    list_area: Rect,
+) {
+    if !config.show_dividers {
+        return;
+    }
+
+    let divider_area = Rect {
+        x: object_area.x,
+        y: object_area.y.saturating_add(object_area.height),
+        width: object_area.width,
+        height: 1,
+    };
+    let clipped = list_area.intersection(divider_area);
+    if clipped.is_empty() {
+        return;
+    }
+
+    let line = config.char_set.divider.repeat(clipped.width as usize);
+    Line::from(Span::styled(line, config.theme.divider)).render(clipped, buf);
+}
+
 impl ObjectListWidget<'_, '_> {
     fn render_node_list(
         &mut self,
@@ -495,6 +528,7 @@ impl ObjectListWidget<'_, '_> {
 
         let objects_and_areas: Vec<(&&view::Node, &Rect)> =
             objects.zip(context.objects_layout.iter()).collect();
+        let last_index = objects_and_areas.len().saturating_sub(1);
         for (i, (object, &object_area)) in objects_and_areas.iter().enumerate()
         {
             let selected = self
@@ -534,6 +568,10 @@ impl ObjectListWidget<'_, '_> {
                     below_clip,
                     NodeWidget::spacing(),
                 );
+            }
+
+            if i < last_index {
+                render_divider(buf, self.config, object_area, context.list_area);
             }
         }
 
@@ -580,6 +618,7 @@ impl ObjectListWidget<'_, '_> {
 
         let objects_and_areas: Vec<(&&view::Device, &Rect)> =
             objects.zip(context.objects_layout.iter()).collect();
+        let last_index = objects_and_areas.len().saturating_sub(1);
         for (i, (object, &object_area)) in objects_and_areas.iter().enumerate()
         {
             let selected = self
@@ -614,6 +653,10 @@ impl ObjectListWidget<'_, '_> {
                     below_clip,
                     DeviceWidget::spacing(),
                 );
+            }
+
+            if i < last_index {
+                render_divider(buf, self.config, object_area, context.list_area);
             }
         }
 
@@ -1506,5 +1549,52 @@ mod tests {
             NodeWidget::spacing(),
         );
         assert_ne!(buf[(0, 3)].style(), blank[(0, 3)].style());
+    }
+
+    #[test]
+    fn render_divider_noop_when_disabled() {
+        let config = config::Config::from_toml_str("show_dividers = false");
+        let object_area = Rect::new(0, 0, 10, 3);
+        let list_area = Rect::new(0, 0, 10, 10);
+        let mut buf = Buffer::empty(list_area);
+
+        render_divider(&mut buf, &config, object_area, list_area);
+
+        let divider_row = Rect::new(0, 3, 10, 1);
+        for cell in buf.content[buf.index_of(divider_row.x, divider_row.y)
+            ..buf.index_of(divider_row.x, divider_row.y) + 10]
+            .iter()
+        {
+            assert_eq!(cell.symbol(), " ");
+        }
+    }
+
+    #[test]
+    fn render_divider_draws_when_enabled() {
+        let config = config::Config::from_toml_str("show_dividers = true");
+        let object_area = Rect::new(0, 0, 10, 3);
+        let list_area = Rect::new(0, 0, 10, 10);
+        let mut buf = Buffer::empty(list_area);
+
+        render_divider(&mut buf, &config, object_area, list_area);
+
+        let divider_row_start = buf.index_of(0, 3);
+        for cell in
+            buf.content[divider_row_start..divider_row_start + 10].iter()
+        {
+            assert_eq!(cell.symbol(), config.char_set.divider);
+        }
+    }
+
+    #[test]
+    fn render_divider_clips_to_list_area() {
+        let config = config::Config::from_toml_str("show_dividers = true");
+        // object_area's bottom row falls just outside list_area's bottom
+        // edge - nothing should be drawn, and this must not panic.
+        let object_area = Rect::new(0, 8, 10, 3);
+        let list_area = Rect::new(0, 0, 10, 10);
+        let mut buf = Buffer::empty(list_area);
+
+        render_divider(&mut buf, &config, object_area, list_area);
     }
 }

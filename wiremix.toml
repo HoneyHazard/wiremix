@@ -37,6 +37,12 @@ theme = "default"
 row_selected_extend_above = false
 row_selected_extend_below = false
 
+# If true, draw a divider line in the gap between items, styled by the
+# divider theme key and using the divider char_set glyph. Off by default -
+# the gap between items already exists either way, so this only changes
+# what's drawn in space that was already blank, never the list's layout.
+show_dividers = false
+
 # Initial tab
 tab = "playback"
 
@@ -364,6 +370,9 @@ tab_selected = { fg = "LightCyan" }
 tab_marker = { fg = "LightCyan" }
 # The symbol at the top/bottom of a tab indicating that there are more items
 list_more = { fg = "DarkGray" }
+# The divider line drawn in the gap between items, when show_dividers is
+# true (see Main Options above). No effect otherwise.
+divider = { fg = "DarkGray" }
 # The name of a PipeWire node
 node_title = { }
 # The name of the selected target for a node
@@ -461,6 +470,9 @@ tab_marker_left = "["
 tab_marker_right = "]"
 # Displayed at the top/bottom of a tab when there are more items
 list_more = "•••"
+# The glyph repeated to draw the divider line between items, when
+# show_dividers is true. Must be exactly 1 character wide.
+divider = "─"
 # Volume bar
 volume_empty = "╌"
 volume_filled = "━"
@@ -508,6 +520,7 @@ tab = { }
 tab_selected = { add_modifier = "BOLD" }
 tab_marker = { add_modifier = "BOLD" }
 list_more = { }
+divider = { }
 node_title = { }
 node_target = { }
 volume = { }
@@ -539,6 +552,7 @@ tab = { }
 tab_selected = { }
 tab_marker = { }
 list_more = { }
+divider = { }
 node_title = { }
 node_target = { }
 volume = { }
@@ -571,6 +585,7 @@ selector_bottom = "░"
 tab_marker_left = "["
 tab_marker_right = "]"
 list_more = "•••"
+divider = "─"
 volume_empty = "─"
 volume_filled = "━"
 meter_left_inactive = "┃"
@@ -599,6 +614,7 @@ selector_bottom = "-"
 tab_marker_left = "["
 tab_marker_right = "]"
 list_more = "~~~"
+divider = "-"
 volume_empty = "-"
 volume_filled = "="
 meter_left_inactive = "="

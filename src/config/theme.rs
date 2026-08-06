@@ -17,6 +17,7 @@ pub struct ThemeOverlay {
     tab_selected: Option<StyleDef>,
     tab_marker: Option<StyleDef>,
     list_more: Option<StyleDef>,
+    divider: Option<StyleDef>,
     node_title: Option<StyleDef>,
     node_target: Option<StyleDef>,
     volume: Option<StyleDef>,
@@ -100,6 +101,7 @@ impl TryFrom<ThemeOverlay> for Theme {
         set!(tab_selected);
         set!(tab_marker);
         set!(list_more);
+        set!(divider);
         set!(node_title);
         set!(node_target);
         set!(volume);
@@ -137,6 +139,7 @@ impl Default for Theme {
             tab_selected: Style::default().fg(Color::LightCyan),
             tab_marker: Style::default().fg(Color::LightCyan),
             list_more: Style::default().fg(Color::DarkGray),
+            divider: Style::default().fg(Color::DarkGray),
             node_title: Style::default(),
             node_target: Style::default(),
             volume: Style::default(),
@@ -183,6 +186,7 @@ impl Theme {
             tab_selected: Style::default().add_modifier(Modifier::BOLD),
             tab_marker: Style::default().add_modifier(Modifier::BOLD),
             list_more: Style::default(),
+            divider: Style::default(),
             node_title: Style::default(),
             node_target: Style::default(),
             volume: Style::default(),
@@ -218,6 +222,7 @@ impl Theme {
             tab_selected: Style::default(),
             tab_marker: Style::default(),
             list_more: Style::default(),
+            divider: Style::default(),
             node_title: Style::default(),
             node_target: Style::default(),
             volume: Style::default(),
