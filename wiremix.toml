@@ -56,6 +56,19 @@ lazy_capture = false
 # streams/devices this is the most direct way to bound that cost.
 #max_concurrent_captures = 8
 
+# Like max_concurrent_captures, but counts (and caps) "wiremix-capture"
+# nodes across the whole PipeWire graph, not just this instance's own -
+# i.e. a total shared across every running wiremix instance that also has
+# this option set, rather than a per-instance limit. Best-effort: with no
+# cross-process locking, instances racing to start a capture at the same
+# moment can transiently exceed this before the graph state settles, and
+# it can't make non-cooperating processes (upstream wiremix, or anything
+# else sharing the "wiremix-capture" node name) back off - only instances
+# that also set this option consider each other. Unset by default (no
+# cap). Composes with max_concurrent_captures above - both are checked
+# independently, so whichever is more restrictive applies.
+#max_concurrent_captures_global = 8
+
 
 # Keybindings
 #

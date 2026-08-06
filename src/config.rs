@@ -45,6 +45,7 @@ pub struct Config {
     pub tabs: Vec<TabKind>,
     pub lazy_capture: bool,
     pub max_concurrent_captures: Option<usize>,
+    pub max_concurrent_captures_global: Option<usize>,
     pub filters: Vec<MatchCondition>,
 }
 
@@ -90,6 +91,7 @@ struct ConfigFile {
     #[serde(default = "default_lazy_capture")]
     lazy_capture: bool,
     max_concurrent_captures: Option<usize>,
+    max_concurrent_captures_global: Option<usize>,
     #[serde(default = "Filter::defaults", deserialize_with = "Filter::merge")]
     filters: Vec<Filter>,
 }
@@ -334,6 +336,13 @@ impl ConfigFile {
         if let Some(max_concurrent_captures) = &opt.max_concurrent_captures {
             self.max_concurrent_captures = Some(*max_concurrent_captures);
         }
+
+        if let Some(max_concurrent_captures_global) =
+            &opt.max_concurrent_captures_global
+        {
+            self.max_concurrent_captures_global =
+                Some(*max_concurrent_captures_global);
+        }
     }
 }
 
@@ -403,6 +412,8 @@ impl TryFrom<ConfigFile> for Config {
             tabs: config_file.tabs,
             lazy_capture: config_file.lazy_capture,
             max_concurrent_captures: config_file.max_concurrent_captures,
+            max_concurrent_captures_global: config_file
+                .max_concurrent_captures_global,
             filters,
         })
     }
@@ -489,6 +500,7 @@ pub mod strict {
         tabs: Vec<TabKind>,
         lazy_capture: bool,
         max_concurrent_captures: Option<usize>,
+        max_concurrent_captures_global: Option<usize>,
         filters: Vec<Filter>,
     }
 
@@ -511,6 +523,8 @@ pub mod strict {
                 tabs: strict.tabs,
                 lazy_capture: strict.lazy_capture,
                 max_concurrent_captures: strict.max_concurrent_captures,
+                max_concurrent_captures_global: strict
+                    .max_concurrent_captures_global,
                 filters: strict.filters,
             }
         }

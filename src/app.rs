@@ -375,6 +375,28 @@ impl<'a> App<'a> {
         self.wirehose.node_capture_stop(object_id);
     }
 
+    /// Node name wiremix (fork or upstream) gives its own peak-monitoring
+    /// capture streams - see wirehose::stream::capture_node. Counting nodes
+    /// with this name in the shared PipeWire graph state is what makes
+    /// max_concurrent_captures_global possible without any custom IPC: the
+    /// graph itself is already the shared, live state every instance reads.
+    const CAPTURE_NODE_NAME: &'static str = "wiremix-capture";
+
+    /// Total number of "wiremix-capture" nodes currently visible in the
+    /// PipeWire graph, from any client - not just this instance's own
+    /// capturing_objects. See the comment at its call site in
+    /// start_capture() for the consistency caveats this implies.
+    fn global_capture_count(&self) -> usize {
+        self.state
+            .nodes
+            .values()
+            .filter(|node| {
+                node.props.node_name().map(String::as_str)
+                    == Some(Self::CAPTURE_NODE_NAME)
+            })
+            .count()
+    }
+
     fn start_capture(&mut self, object_id: ObjectId) {
         if self.config.lazy_capture
             && !self.visible_objects.contains(&object_id)
@@ -390,6 +412,58 @@ impl<'a> App<'a> {
             if self.capturing_objects.len() >= max
                 && !self.capturing_objects.contains(&object_id)
             {
+                return;
+            }
+        }
+
+        // Same idea, but counting *every* "wiremix-capture" node currently
+        // visible in the PipeWire graph - including ones opened by other
+        // wiremix instances - rather than just this instance's own
+        // capturing_objects. This is necessarily best-effort: there's no
+        // cross-process locking, so two instances racing to start a new
+        // capture at the same moment can both observe room under the cap
+        // and both proceed, transiently exceeding it until the graph state
+        // settles. It also can't make non-cooperating processes (upstream
+        // wiremix without this option, or any other client also named
+        // "wiremix-capture") back off - it only makes instances that opt
+        // into this setting considerate of each other and of themselves.
+        //
+        // global_capture_count() alone is not enough: it only reflects
+        // captures that have round-tripped through the PipeWire server and
+        // come back as a state update over wirehose's event channel, but
+        // node_capture_start() (called at the bottom of this function) is
+        // fire-and-forget - it queues a command for a separate PipeWire
+        // thread and returns immediately, with no synchronous confirmation.
+        // handle_events() drains and processes every currently-queued event
+        // in one synchronous burst (see its `while let Ok(event) =
+        // self.rx.try_recv()` loop), which is exactly when a flood of
+        // CaptureEligibility::Eligible events (e.g. on startup, or when
+        // lazy_capture reveals many nodes at once) calls start_capture()
+        // for many objects back to back. None of those calls' own
+        // node_capture_start() commands can possibly have round-tripped
+        // back into self.state.nodes by the time the next call in the same
+        // burst runs this check - so global_capture_count() reports the
+        // same stale pre-burst number for the whole burst, and every call
+        // sees "room under the cap" even after dozens of this instance's
+        // own captures have already been started. Confirmed live: a single
+        // instance with max_concurrent_captures_global = 20 and no other
+        // instances contending ended up with 28 of its own active
+        // captures, purely from this self-lag - not from any cross-instance
+        // race, and not from CaptureEligibility::NeedsRestart (ruled out
+        // separately: capture streams are properly disconnected on renewal
+        // now that StreamRegistry::add_stream() calls disconnect() on the
+        // stream it evicts, matching what StreamRegistry::remove() already
+        // did - see that fix's own commit). self.capturing_objects.len()
+        // has no such lag - it's updated synchronously the instant this
+        // instance decides to capture something, before any round trip -
+        // so folding it in as a floor closes the self-lag gap without
+        // changing the inherent, already-documented cross-instance
+        // best-effort behavior above.
+        if let Some(max) = self.config.max_concurrent_captures_global {
+            let estimate = self
+                .global_capture_count()
+                .max(self.capturing_objects.len());
+            if estimate >= max && !self.capturing_objects.contains(&object_id) {
                 return;
             }
         }
@@ -1032,6 +1106,7 @@ mod tests {
             lazy_capture: Default::default(),
             filters: Default::default(),
             max_concurrent_captures: Default::default(),
+            max_concurrent_captures_global: Default::default(),
         };
 
         let mut app = App::new(wirehose, event_rx, config);
@@ -1134,6 +1209,7 @@ mod tests {
             lazy_capture: Default::default(),
             filters: Default::default(),
             max_concurrent_captures: Default::default(),
+            max_concurrent_captures_global: Default::default(),
         };
         let mut app = App::new(&wirehose, event_rx, config);
 
@@ -1491,6 +1567,81 @@ mod tests {
 
         // Only 2 of the 3 eligible nodes should actually be capturing.
         assert_eq!(app.capturing_objects.len(), 2);
+    }
+
+    /// Adds a node with node.name = "wiremix-capture" but never marks it
+    /// eligible - simulates another wiremix instance's own capture stream,
+    /// which is visible in the shared PipeWire graph state but is not
+    /// something *this* instance would ever try to manage itself (the
+    /// default node.name = "wiremix-capture" filter in
+    /// config::filter::Filter::defaults() already keeps it out of
+    /// capturable_objects).
+    fn add_foreign_capture_node(app: &mut App<'_>, object_id: ObjectId) {
+        let mut props = PropertyStore::default();
+        props.set_node_description(String::from("wiremix-capture"));
+        props.set_media_class(String::from("Stream/Input/Audio"));
+        props.set_node_name(String::from("wiremix-capture"));
+        props.set_object_serial(u32::from(object_id) as u64);
+
+        StateEvent::NodeProperties { object_id, props }
+            .handle(app)
+            .unwrap();
+    }
+
+    #[test]
+    fn start_capture_enforces_global_max() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let (_, event_rx) = mpsc::channel();
+        let config = Config::from_toml_str(
+            "lazy_capture = false\nmax_concurrent_captures_global = 2",
+        );
+        let mut app = App::new(&wirehose, event_rx, config);
+
+        // Two capture streams already open elsewhere (not ours) - the
+        // global budget is already fully spent. In the real running
+        // system, this instance's own started captures would also show up
+        // here (PipeWire reflects every client's streams to every
+        // listener, which is exactly why Filter::defaults() has to
+        // explicitly exclude "wiremix-capture" from capturable_objects -
+        // self-observation is real), self-consistently shrinking its own
+        // remaining budget as it captures more. The mock wirehose doesn't
+        // simulate that round trip, so this test instead fixes the global
+        // count at the cap via foreign nodes and checks the decline path.
+        add_foreign_capture_node(&mut app, ObjectId::from_raw_id(100));
+        add_foreign_capture_node(&mut app, ObjectId::from_raw_id(101));
+
+        for i in 1..=3 {
+            let id = ObjectId::from_raw_id(i);
+            add_capturable_node(&mut app, id);
+            app.set_capture_eligibility(CaptureEligibility::Eligible(id));
+        }
+
+        // Global budget is already fully spent by the two foreign nodes,
+        // so none of the 3 locally-eligible nodes should start capturing -
+        // despite there being no local max_concurrent_captures at all.
+        assert_eq!(app.capturing_objects.len(), 0);
+    }
+
+    #[test]
+    fn global_capture_count_counts_foreign_nodes_only_by_name() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let (_, event_rx) = mpsc::channel();
+        let config = Config::from_toml_str("");
+        let mut app = App::new(&wirehose, event_rx, config);
+
+        assert_eq!(app.global_capture_count(), 0);
+
+        add_foreign_capture_node(&mut app, ObjectId::from_raw_id(100));
+        assert_eq!(app.global_capture_count(), 1);
+
+        // A regular, differently-named node shouldn't be counted.
+        add_capturable_node(&mut app, ObjectId::from_raw_id(101));
+        assert_eq!(app.global_capture_count(), 1);
+
+        add_foreign_capture_node(&mut app, ObjectId::from_raw_id(102));
+        assert_eq!(app.global_capture_count(), 2);
     }
 
     #[test]

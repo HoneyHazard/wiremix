@@ -86,6 +86,13 @@ pub struct Opt {
     #[clap(long, value_name = "COUNT")]
     pub max_concurrent_captures: Option<usize>,
 
+    /// Cap how many peak-monitoring streams may exist system-wide across
+    /// all running wiremix instances at once (best-effort - see README for
+    /// caveats). Composes with --max-concurrent-captures, which caps this
+    /// instance alone
+    #[clap(long, value_name = "COUNT")]
+    pub max_concurrent_captures_global: Option<usize>,
+
     #[cfg(debug_assertions)]
     #[clap(short, long)]
     pub dump_events: bool,
