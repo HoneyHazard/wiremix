@@ -1,10 +1,12 @@
 //! Main rendering and event processing for the application.
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 
-use crate::config::{Config, Peaks, TabKind};
+use crate::config::{Config, MatchCondition, Peaks, TabKind};
+use crate::hidden_state::HiddenState;
 use crate::wirehose::state::CaptureEligibility;
 use crate::wirehose::{
     media_class, CommandSender, Event as PipewireEvent, PeakProcessor,
@@ -55,6 +57,7 @@ pub enum Action {
     MoveLast,
     ToggleMute,
     ToggleHiddenInstance,
+    ToggleHiddenPermanent,
     SetRelativeVolume(f32),
     SetDefault,
     ActivateDropdown,
@@ -92,6 +95,9 @@ impl std::fmt::Display for Action {
             Action::ToggleMute => write!(f, "Toggle mute"),
             Action::ToggleHiddenInstance => {
                 write!(f, "Hide/show for this instance only")
+            }
+            Action::ToggleHiddenPermanent => {
+                write!(f, "Hide/show permanently, synced to other instances")
             }
             Action::SetAbsoluteVolume(vol) => {
                 write!(f, "Set volume to {}%", Self::format_percentage(*vol))
@@ -231,6 +237,25 @@ pub struct App<'a> {
     /// synced to other instances. Hidden objects sink to the bottom of
     /// their list and are excluded from capture.
     hidden_instance: HashSet<ObjectId>,
+    /// Durable matchers for permanently-hidden items, loaded from (and
+    /// saved back to) `hidden_state_path`. Source of truth for
+    /// `hidden_permanent` - re-evaluated against live state whenever it
+    /// changes, since object IDs in `hidden_permanent` don't survive a
+    /// restart but these matchers do.
+    hidden_permanent_matchers: Vec<MatchCondition>,
+    /// Object IDs currently matching a `hidden_permanent_matchers` entry.
+    /// Recomputed from `hidden_permanent_matchers` whenever state changes,
+    /// same recompute rather than incremental-update-per-event choice
+    /// `capturable_objects` etc. don't need since matcher content can
+    /// change independently of any single state event. Excluded from
+    /// capture and sinks below `hidden_instance` in the list, same as
+    /// instance-hidden objects but ranked lower.
+    hidden_permanent: HashSet<ObjectId>,
+    /// Where to load/save `hidden_permanent_matchers`. `None` if
+    /// `HiddenState::default_path()` couldn't resolve one (no `$HOME`) -
+    /// permanent hide then behaves like instance hide for the rest of the
+    /// session, since there's nowhere to persist it.
+    hidden_state_path: Option<PathBuf>,
     /// Callback for peak ballistics.
     peak_processor: Arc<dyn PeakProcessor>,
     /// Objects eligible for capture.
@@ -290,12 +315,72 @@ impl<'a> App<'a> {
             help_position: None,
             visible_objects: HashSet::new(),
             hidden_instance: HashSet::new(),
+            hidden_permanent_matchers: Vec::new(),
+            hidden_permanent: HashSet::new(),
+            hidden_state_path: None,
             peak_processor: Arc::new(peak_processor),
             capturable_objects: HashSet::new(),
             capturing_objects: HashSet::new(),
             capture_rotation_start: 0,
             frames_since_rotation: 0,
         }
+    }
+
+    /// Loads persisted permanently-hidden-item matchers from `path` and
+    /// remembers `path` for future saves. Call once after construction and
+    /// before [`Self::run`] - matching entries won't take effect against
+    /// live nodes until the first state update recomputes
+    /// `hidden_permanent`. A no-op if `path` is `None` (no resolvable
+    /// state directory) or nothing has ever been saved there yet.
+    pub fn load_hidden_state(&mut self, path: Option<PathBuf>) {
+        let Some(path) = path else {
+            return;
+        };
+
+        if let Ok(hidden_state) = HiddenState::load(&path) {
+            self.hidden_permanent_matchers = hidden_state.hidden;
+        }
+
+        self.hidden_state_path = Some(path);
+    }
+
+    /// Re-evaluates `hidden_permanent_matchers` against every currently
+    /// live node, since a node's `object_id` in `hidden_permanent` doesn't
+    /// survive a restart but the matchers persisted to
+    /// `hidden_state_path` do - and matcher content can change (a
+    /// permanent hide/unhide) independently of any single state event, so
+    /// this can't be updated incrementally the way `capturable_objects`
+    /// etc. are.
+    fn recompute_hidden_permanent(&mut self) {
+        self.hidden_permanent = self
+            .state
+            .nodes
+            .values()
+            .filter(|node| {
+                self.hidden_permanent_matchers
+                    .iter()
+                    .any(|matcher| matcher.matches(&self.state, *node))
+            })
+            .map(|node| node.object_id)
+            .collect();
+    }
+
+    /// Persists `hidden_permanent_matchers` to `hidden_state_path`. A
+    /// no-op if no path was resolved at startup. Errors are swallowed -
+    /// same tradeoff `HiddenState::save`'s own doc comment already
+    /// describes for a racing concurrent save, extended here to cover
+    /// any other save failure (e.g. a read-only filesystem): permanent
+    /// hide still works for the rest of this session even if it can't be
+    /// written to disk, rather than crashing the whole UI over it.
+    fn save_hidden_state(&self) {
+        let Some(path) = &self.hidden_state_path else {
+            return;
+        };
+
+        let hidden_state = HiddenState {
+            hidden: self.hidden_permanent_matchers.clone(),
+        };
+        let _ = hidden_state.save(path);
     }
 
     pub fn run(mut self, terminal: &mut DefaultTerminal) -> Result<()> {
@@ -315,12 +400,14 @@ impl<'a> App<'a> {
         while !self.exit {
             // Update view if needed
             if self.state_dirty {
+                self.recompute_hidden_permanent();
                 self.view = View::from(
                     self.wirehose,
                     &self.state,
                     &self.config.names,
                     &self.config.filters,
                     &self.hidden_instance,
+                    &self.hidden_permanent,
                 );
             }
             self.state_dirty = false;
@@ -376,6 +463,7 @@ impl<'a> App<'a> {
             view: &self.view,
             config: &self.config,
             hidden_instance: &self.hidden_instance,
+            hidden_permanent: &self.hidden_permanent,
         };
         let mut widget_state = AppWidgetState {
             mouse_areas: &mut self.mouse_areas,
@@ -498,6 +586,21 @@ impl<'a> App<'a> {
         let Some(node) = self.state.nodes.get(&object_id) else {
             return;
         };
+
+        // Evaluated directly against hidden_permanent_matchers, not the
+        // cached hidden_permanent set: during startup, the initial flood
+        // of CaptureEligibility::Eligible events is handled before the
+        // main loop's first state_dirty pass ever recomputes
+        // hidden_permanent (see Self::run's "wait until ready" loop), so
+        // relying on the cache here would let an already-permanently-
+        // hidden node start capturing anyway on every fresh launch.
+        if self
+            .hidden_permanent_matchers
+            .iter()
+            .any(|matcher| matcher.matches(&self.state, node))
+        {
+            return;
+        }
 
         if self
             .config
@@ -917,6 +1020,43 @@ impl Handle for Action {
                     app.state_dirty = true;
                 }
             }
+            Action::ToggleHiddenPermanent => {
+                if let Some(object_id) = current_list!(app).selected {
+                    let Some(node) = app.state.nodes.get(&object_id) else {
+                        return Ok(false);
+                    };
+
+                    if app.hidden_permanent.contains(&object_id) {
+                        // Unhiding: drop any matcher(s) that currently
+                        // match this node, rather than tracking which
+                        // matcher created which hide (there's no 1:1
+                        // mapping once matchers can be hand-edited in the
+                        // state file, or match more than one node).
+                        app.hidden_permanent_matchers.retain(|matcher| {
+                            !matcher.matches(&app.state, node)
+                        });
+                    } else if let Some(name) = node.props.node_name() {
+                        app.hidden_permanent_matchers
+                            .push(MatchCondition::from_node_name(name));
+                    } else {
+                        // No node.name to build a durable matcher from -
+                        // nothing to persist, so there's nothing this
+                        // action can do for this node.
+                        return Ok(false);
+                    }
+
+                    app.recompute_hidden_permanent();
+
+                    if app.hidden_permanent.contains(&object_id) {
+                        app.stop_capture(object_id);
+                    } else if app.capturable_objects.contains(&object_id) {
+                        app.start_capture(object_id);
+                    }
+
+                    app.save_hidden_state();
+                    app.state_dirty = true;
+                }
+            }
             Action::SetAbsoluteVolume(volume) => {
                 let max = app
                     .config
@@ -1040,6 +1180,7 @@ pub struct AppWidget<'a, 'b> {
     view: &'a View<'b>,
     config: &'a Config,
     hidden_instance: &'a HashSet<ObjectId>,
+    hidden_permanent: &'a HashSet<ObjectId>,
 }
 
 pub struct AppWidgetState<'a> {
@@ -1106,6 +1247,7 @@ impl<'a> StatefulWidget for AppWidget<'a, '_> {
             view: self.view,
             config: self.config,
             hidden_instance: self.hidden_instance,
+            hidden_permanent: self.hidden_permanent,
         };
         widget.render(list_area, buf, state.mouse_areas);
 
@@ -1239,6 +1381,7 @@ mod tests {
             &app.config.names,
             &Vec::new(),
             &app.hidden_instance,
+            &app.hidden_permanent,
         );
 
         // Select the node
@@ -2061,5 +2204,204 @@ mod tests {
             commands.borrow_mut().pop_front(),
             Some(mock::MockCommand::NodeCaptureStart(id))
         );
+    }
+
+    #[test]
+    fn toggle_hidden_permanent_hides_and_shows_selected_object() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        let id = ObjectId::from_raw_id(0);
+        app.state_dirty = false;
+
+        assert!(Action::ToggleHiddenPermanent.handle(&mut app).unwrap());
+        assert!(app.hidden_permanent.contains(&id));
+        assert_eq!(app.hidden_permanent_matchers.len(), 1);
+        assert!(app.state_dirty);
+
+        // Hiding the only object releases the selection (see
+        // toggle_hidden_permanent_clears_selection_when_hiding_only_item) -
+        // re-select it to verify toggling again un-hides it.
+        Action::SelectObject(id).handle(&mut app).unwrap();
+
+        app.state_dirty = false;
+        assert!(Action::ToggleHiddenPermanent.handle(&mut app).unwrap());
+        assert!(!app.hidden_permanent.contains(&id));
+        assert!(app.hidden_permanent_matchers.is_empty());
+        assert!(app.state_dirty);
+    }
+
+    #[test]
+    fn toggle_hidden_permanent_clears_selection_when_hiding_only_item() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        let id = ObjectId::from_raw_id(0);
+        assert_eq!(current_list!(app).selected, Some(id));
+
+        Action::ToggleHiddenPermanent.handle(&mut app).unwrap();
+
+        assert_eq!(current_list!(app).selected, None);
+    }
+
+    #[test]
+    fn toggle_hidden_permanent_unhiding_keeps_selection() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        let id = ObjectId::from_raw_id(0);
+
+        Action::ToggleHiddenPermanent.handle(&mut app).unwrap();
+        Action::SelectObject(id).handle(&mut app).unwrap();
+
+        Action::ToggleHiddenPermanent.handle(&mut app).unwrap();
+
+        assert_eq!(current_list!(app).selected, Some(id));
+    }
+
+    #[test]
+    fn toggle_hidden_permanent_selects_next_when_hiding_middle_item() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        let id1 = ObjectId::from_raw_id(1);
+        let id2 = ObjectId::from_raw_id(2);
+        add_playback_node(&mut app, id1);
+        add_playback_node(&mut app, id2);
+        app.view = View::from(
+            app.wirehose,
+            &app.state,
+            &app.config.names,
+            &Vec::new(),
+            &app.hidden_instance,
+            &app.hidden_permanent,
+        );
+        Action::SelectObject(id1).handle(&mut app).unwrap();
+
+        Action::ToggleHiddenPermanent.handle(&mut app).unwrap();
+
+        assert_eq!(current_list!(app).selected, Some(id2));
+    }
+
+    #[test]
+    fn toggle_hidden_permanent_stops_capture_when_hiding() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let mut app = fixture(&wirehose);
+        let id = ObjectId::from_raw_id(0);
+
+        app.capturable_objects.insert(id);
+        app.capturing_objects.insert(id);
+        commands.borrow_mut().clear();
+
+        Action::ToggleHiddenPermanent.handle(&mut app).unwrap();
+
+        assert!(app.hidden_permanent.contains(&id));
+        assert!(!app.capturing_objects.contains(&id));
+        assert_eq!(
+            commands.borrow_mut().pop_front(),
+            Some(mock::MockCommand::NodeCaptureStop(id))
+        );
+    }
+
+    #[test]
+    fn toggle_hidden_permanent_resumes_capture_when_unhiding() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let mut app = fixture(&wirehose);
+        let id = ObjectId::from_raw_id(0);
+
+        Action::ToggleHiddenPermanent.handle(&mut app).unwrap();
+        assert!(app.hidden_permanent.contains(&id));
+        // Hiding released the selection (only object in the list) -
+        // re-select it before toggling again.
+        Action::SelectObject(id).handle(&mut app).unwrap();
+        app.capturable_objects.insert(id);
+        commands.borrow_mut().clear();
+
+        Action::ToggleHiddenPermanent.handle(&mut app).unwrap();
+
+        assert!(!app.hidden_permanent.contains(&id));
+        assert!(app.capturing_objects.contains(&id));
+        assert_eq!(
+            commands.borrow_mut().pop_front(),
+            Some(mock::MockCommand::NodeCaptureStart(id))
+        );
+    }
+
+    #[test]
+    fn start_capture_skips_hidden_permanent_objects() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let (_, event_rx) = mpsc::channel();
+        let config = Config::from_toml_str("lazy_capture = false");
+        let mut app = App::new(&wirehose, event_rx, config);
+
+        let id = ObjectId::from_raw_id(1);
+        let mut props = PropertyStore::default();
+        props.set_node_description(String::from("Test node"));
+        props.set_media_class(String::from("Stream/Output/Audio"));
+        props.set_node_name(String::from("hidden-node"));
+        props.set_object_serial(u32::from(id) as u64);
+        StateEvent::NodeProperties {
+            object_id: id,
+            props,
+        }
+        .handle(&mut app)
+        .unwrap();
+        // Reset state: node exists but isn't capturing yet
+        app.capturing_objects.clear();
+        app.capturable_objects.clear();
+        // Gated directly against hidden_permanent_matchers (not the
+        // hidden_permanent cache - see the comment on that check in
+        // start_capture() for why), so that's what needs to be set here.
+        app.hidden_permanent_matchers
+            .push(MatchCondition::from_node_name("hidden-node"));
+        commands.borrow_mut().clear();
+
+        app.set_capture_eligibility(CaptureEligibility::Eligible(id));
+
+        assert!(app.capturable_objects.contains(&id));
+        assert!(!app.capturing_objects.contains(&id));
+        assert!(commands.borrow().is_empty());
+    }
+
+    #[test]
+    fn toggle_hidden_permanent_persists_and_reloads() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        let id = ObjectId::from_raw_id(0);
+
+        let path = std::env::temp_dir().join(format!(
+            "wiremix-app-test-hidden-{}.toml",
+            std::process::id()
+        ));
+        app.hidden_state_path = Some(path.clone());
+
+        Action::ToggleHiddenPermanent.handle(&mut app).unwrap();
+        assert!(app.hidden_permanent.contains(&id));
+
+        // A fresh App, as if wiremix had just been relaunched, loading the
+        // same state file and observing the same live node should
+        // rediscover it as hidden - object IDs don't survive a restart,
+        // but the persisted node.name matcher does.
+        let (_, event_rx2) = mpsc::channel();
+        let mut app2 =
+            App::new(&wirehose, event_rx2, Config::from_toml_str(""));
+        app2.load_hidden_state(Some(path.clone()));
+        assert_eq!(app2.hidden_permanent_matchers.len(), 1);
+
+        let mut props = PropertyStore::default();
+        props.set_node_description(String::from("Test node"));
+        props.set_media_class(String::from("Stream/Output/Audio"));
+        props.set_node_name(String::from("Node name"));
+        props.set_object_serial(0);
+        StateEvent::NodeProperties {
+            object_id: id,
+            props,
+        }
+        .handle(&mut app2)
+        .unwrap();
+        app2.recompute_hidden_permanent();
+
+        assert!(app2.hidden_permanent.contains(&id));
+
+        let _ = std::fs::remove_file(&path);
     }
 }

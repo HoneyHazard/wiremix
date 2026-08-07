@@ -33,7 +33,8 @@ pub struct NodeWidget<'a> {
     device_kind: Option<DeviceKind>,
     node: &'a view::Node,
     selected: bool,
-    hidden: bool,
+    hidden_instance: bool,
+    hidden_permanent: bool,
 }
 
 impl<'a> NodeWidget<'a> {
@@ -42,14 +43,16 @@ impl<'a> NodeWidget<'a> {
         device_kind: Option<DeviceKind>,
         node: &'a view::Node,
         selected: bool,
-        hidden: bool,
+        hidden_instance: bool,
+        hidden_permanent: bool,
     ) -> Self {
         Self {
             config,
             device_kind,
             node,
             selected,
-            hidden,
+            hidden_instance,
+            hidden_permanent,
         }
     }
 
@@ -177,7 +180,8 @@ impl StatefulWidget for NodeWidget<'_> {
             self.device_kind,
             self.node,
             self.selected,
-            self.hidden,
+            self.hidden_instance,
+            self.hidden_permanent,
         )
         .render(header_area, buf, mouse_areas);
 
@@ -186,7 +190,7 @@ impl StatefulWidget for NodeWidget<'_> {
             self.config,
             self.node,
             self.selected,
-            self.hidden,
+            self.hidden_instance || self.hidden_permanent,
         );
         if self.config.peaks == Peaks::Off {
             let layout = Layout::default()
@@ -223,8 +227,8 @@ impl StatefulWidget for NodeWidget<'_> {
             // inactive-looking placeholder even though nothing is actually
             // being sampled, which reads as broken rather than intentionally
             // off. Leave meter_area untouched instead.
-            let monitoring_suspended =
-                self.hidden && !self.config.capture_hidden;
+            let hidden = self.hidden_instance || self.hidden_permanent;
+            let monitoring_suspended = hidden && !self.config.capture_hidden;
             if !monitoring_suspended {
                 MeterWidget::new(self.config, self.node)
                     .render(meter_area, buf);
@@ -275,7 +279,8 @@ struct HeaderWidget<'a> {
     device_kind: Option<DeviceKind>,
     node: &'a view::Node,
     selected: bool,
-    hidden: bool,
+    hidden_instance: bool,
+    hidden_permanent: bool,
 }
 
 impl<'a> HeaderWidget<'a> {
@@ -284,14 +289,16 @@ impl<'a> HeaderWidget<'a> {
         device_kind: Option<DeviceKind>,
         node: &'a view::Node,
         selected: bool,
-        hidden: bool,
+        hidden_instance: bool,
+        hidden_permanent: bool,
     ) -> Self {
         Self {
             config,
             device_kind,
             node,
             selected,
-            hidden,
+            hidden_instance,
+            hidden_permanent,
         }
     }
 
@@ -308,11 +315,15 @@ impl<'a> HeaderWidget<'a> {
         }
     }
 
+    fn hidden(&self) -> bool {
+        self.hidden_instance || self.hidden_permanent
+    }
+
     /// Patches `row_hidden` onto `base` when this row is hidden - a no-op
     /// (`row_hidden` defaults to an empty `Style`) unless a theme
     /// explicitly sets it.
     fn hidden_style(&self, base: Style) -> Style {
-        if self.hidden {
+        if self.hidden() {
             base.patch(self.config.theme.row_hidden)
         } else {
             base
@@ -351,7 +362,9 @@ impl<'a> HeaderWidget<'a> {
         };
         let title_style =
             self.hidden_style(self.text_style(self.config.theme.node_title));
-        let hidden_prefix = if self.hidden {
+        let hidden_prefix = if self.hidden_permanent {
+            Span::styled(&self.config.char_set.hidden_permanent, title_style)
+        } else if self.hidden_instance {
             Span::styled(&self.config.char_set.hidden_instance, title_style)
         } else {
             Span::from("")
@@ -646,10 +659,10 @@ mod tests {
     fn non_blank_cells(config: &Config, node: &view::Node) -> usize {
         let area = Rect::new(0, 0, 20, 3);
         let mut buf = Buffer::empty(area);
-        // hidden is true in both compared renders below, so the "[hide] "
-        // title prefix is present either way - only capture_hidden
-        // differs, isolating the meter's own contribution.
-        NodeWidget::new(config, None, node, false, true).render(
+        // hidden_instance is true in both compared renders below, so the
+        // "[hide] " title prefix is present either way - only
+        // capture_hidden differs, isolating the meter's own contribution.
+        NodeWidget::new(config, None, node, false, true, false).render(
             area,
             &mut buf,
             &mut Vec::new(),

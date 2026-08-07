@@ -428,6 +428,7 @@ pub struct ObjectListWidget<'a, 'b> {
     pub view: &'a view::View<'b>,
     pub config: &'a Config,
     pub hidden_instance: &'a HashSet<ObjectId>,
+    pub hidden_permanent: &'a HashSet<ObjectId>,
 }
 
 struct ObjectListRenderContext<'a> {
@@ -588,13 +589,17 @@ impl ObjectListWidget<'_, '_> {
                 .selected
                 .map(|id| id == object.object_id)
                 .unwrap_or_default();
-            let hidden = self.hidden_instance.contains(&object.object_id);
+            let hidden_instance =
+                self.hidden_instance.contains(&object.object_id);
+            let hidden_permanent =
+                self.hidden_permanent.contains(&object.object_id);
             NodeWidget::new(
                 self.config,
                 self.object_list.device_kind,
                 object,
                 selected,
-                hidden,
+                hidden_instance,
+                hidden_permanent,
             )
             .render(object_area, buf, mouse_areas);
 
@@ -680,12 +685,18 @@ impl ObjectListWidget<'_, '_> {
                 .selected
                 .map(|id| id == object.object_id)
                 .unwrap_or_default();
-            let hidden = self.hidden_instance.contains(&object.object_id);
-            DeviceWidget::new(object, selected, hidden, self.config).render(
-                object_area,
-                buf,
-                mouse_areas,
-            );
+            let hidden_instance =
+                self.hidden_instance.contains(&object.object_id);
+            let hidden_permanent =
+                self.hidden_permanent.contains(&object.object_id);
+            DeviceWidget::new(
+                object,
+                selected,
+                hidden_instance,
+                hidden_permanent,
+                self.config,
+            )
+            .render(object_area, buf, mouse_areas);
 
             if selected {
                 // See the matching comment in render_node_list().
@@ -958,6 +969,7 @@ mod tests {
             &config::Names::default(),
             &Vec::new(),
             &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -984,6 +996,7 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
             &HashSet::new(),
         );
 
@@ -1113,6 +1126,7 @@ mod tests {
             &config::Names::default(),
             &Vec::new(),
             &hidden,
+            &HashSet::new(),
         );
 
         let ids: Vec<ObjectId> = view
@@ -1129,6 +1143,38 @@ mod tests {
     }
 
     #[test]
+    fn hidden_permanent_objects_rank_below_hidden_instance() {
+        let (state, wirehose) = init();
+        let mut hidden_instance = HashSet::new();
+        hidden_instance.insert(ObjectId::from_raw_id(5));
+        let mut hidden_permanent = HashSet::new();
+        // Permanent-hidden even though it comes first by object_serial -
+        // should still rank below the instance-hidden object.
+        hidden_permanent.insert(ObjectId::from_raw_id(1));
+
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+            &hidden_instance,
+            &hidden_permanent,
+        );
+
+        let ids: Vec<ObjectId> = view
+            .full_nodes(NodeKind::All)
+            .iter()
+            .map(|node| node.object_id)
+            .collect();
+
+        let expected: Vec<ObjectId> = [2, 3, 4, 6, 7, 8, 9, 10, 5, 1]
+            .into_iter()
+            .map(ObjectId::from_raw_id)
+            .collect();
+        assert_eq!(ids, expected);
+    }
+
+    #[test]
     fn visible_objects_changes_with_scroll() {
         let (state, wirehose) = init();
         let view = View::from(
@@ -1136,6 +1182,7 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
             &HashSet::new(),
         );
 
@@ -1222,6 +1269,7 @@ mod tests {
             &config::Names::default(),
             &Vec::new(),
             &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -1282,6 +1330,7 @@ mod tests {
             &config::Names::default(),
             &Vec::new(),
             &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -1334,6 +1383,7 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
             &HashSet::new(),
         );
 
@@ -1404,6 +1454,7 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
             &HashSet::new(),
         );
 
@@ -1498,6 +1549,7 @@ mod tests {
             &config::Names::default(),
             &Vec::new(),
             &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -1542,6 +1594,7 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
             &HashSet::new(),
         );
 
@@ -1588,6 +1641,7 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
             &HashSet::new(),
         );
 

@@ -19,7 +19,8 @@ use crate::view;
 pub struct DeviceWidget<'a> {
     device: &'a view::Device,
     selected: bool,
-    hidden: bool,
+    hidden_instance: bool,
+    hidden_permanent: bool,
     config: &'a Config,
 }
 
@@ -27,15 +28,21 @@ impl<'a> DeviceWidget<'a> {
     pub fn new(
         device: &'a view::Device,
         selected: bool,
-        hidden: bool,
+        hidden_instance: bool,
+        hidden_permanent: bool,
         config: &'a Config,
     ) -> Self {
         Self {
             device,
             selected,
-            hidden,
+            hidden_instance,
+            hidden_permanent,
             config,
         }
+    }
+
+    fn hidden(&self) -> bool {
+        self.hidden_instance || self.hidden_permanent
     }
 
     /// Height of a full device display.
@@ -154,12 +161,14 @@ impl StatefulWidget for DeviceWidget<'_> {
         let target_area = layout[1];
 
         let title_style = self.text_style(self.config.theme.config_device);
-        let title_style = if self.hidden {
+        let title_style = if self.hidden() {
             title_style.patch(self.config.theme.row_hidden)
         } else {
             title_style
         };
-        let hidden_prefix = if self.hidden {
+        let hidden_prefix = if self.hidden_permanent {
+            Span::styled(&self.config.char_set.hidden_permanent, title_style)
+        } else if self.hidden_instance {
             Span::styled(&self.config.char_set.hidden_instance, title_style)
         } else {
             Span::from("")
@@ -172,12 +181,12 @@ impl StatefulWidget for DeviceWidget<'_> {
         .render(title_area, buf);
 
         let profile_style = self.text_style(self.config.theme.config_profile);
-        let profile_style = if self.hidden {
+        let profile_style = if self.hidden() {
             profile_style.patch(self.config.theme.row_hidden)
         } else {
             profile_style
         };
-        let dropdown_icon_style = if self.hidden {
+        let dropdown_icon_style = if self.hidden() {
             self.config
                 .theme
                 .dropdown_icon
