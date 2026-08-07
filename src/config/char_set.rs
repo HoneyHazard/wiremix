@@ -15,6 +15,7 @@ pub struct CharSetOverlay {
     inherit: Option<String>,
     default_device: Option<String>,
     default_stream: Option<String>,
+    hidden_instance: Option<String>,
     selector_top: Option<String>,
     selector_middle: Option<String>,
     selector_bottom: Option<String>,
@@ -98,6 +99,7 @@ impl TryFrom<CharSetOverlay> for CharSet {
 
         validate_and_set!(default_device, 1);
         validate_and_set!(default_stream, 1);
+        validate_and_set!(hidden_instance, 0);
         validate_and_set!(selector_top, 1);
         validate_and_set!(selector_middle, 1);
         validate_and_set!(selector_bottom, 1);
@@ -139,6 +141,7 @@ impl Default for CharSet {
         Self {
             default_device: String::from("◇"),
             default_stream: String::from("◇"),
+            hidden_instance: String::from("[hide] "),
             selector_top: String::from("░"),
             selector_middle: String::from("▒"),
             selector_bottom: String::from("░"),
@@ -181,6 +184,7 @@ impl CharSet {
         Self {
             default_device: String::from("◊"),
             default_stream: String::from("◊"),
+            hidden_instance: String::from("[hide] "),
             selector_top: String::from("░"),
             selector_middle: String::from("▒"),
             selector_bottom: String::from("░"),
@@ -213,6 +217,7 @@ impl CharSet {
         Self {
             default_device: String::from("*"),
             default_stream: String::from("*"),
+            hidden_instance: String::from("[hide] "),
             selector_top: String::from("-"),
             selector_middle: String::from("="),
             selector_bottom: String::from("-"),

@@ -1,7 +1,7 @@
 //! View representing PipeWire state in a convenient format for rendering.
 
 use itertools::Itertools;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
 
 use std::sync::Arc;
@@ -472,6 +472,7 @@ impl<'a> View<'a> {
         state: &state::State,
         names: &config::Names,
         filters: &[config::MatchCondition],
+        hidden_instance: &HashSet<ObjectId>,
     ) -> View<'a> {
         let default_sink_name = default_for(state, "default.audio.sink");
         let default_source_name = default_for(state, "default.audio.source");
@@ -595,17 +596,32 @@ impl<'a> View<'a> {
                 nodes_input.push(*id);
             }
         }
+        // Stable sort on hidden status only, after the object_serial sort
+        // above - preserves relative order within the visible and hidden
+        // groups, so hidden objects sink to the bottom without otherwise
+        // reshuffling the list.
+        for list in [
+            &mut nodes_all,
+            &mut nodes_playback,
+            &mut nodes_recording,
+            &mut nodes_output,
+            &mut nodes_input,
+        ] {
+            list.sort_by_key(|id| hidden_instance.contains(id));
+        }
         let nodes_all = nodes_all;
         let nodes_playback = nodes_playback;
         let nodes_recording = nodes_recording;
         let nodes_output = nodes_output;
         let nodes_input = nodes_input;
 
-        let devices_all = devices
+        let mut devices_all: Vec<ObjectId> = devices
             .iter()
             .sorted_by_key(|(_, device)| device.object_serial)
             .map(|(&id, _)| id)
             .collect();
+        devices_all.sort_by_key(|id| hidden_instance.contains(id));
+        let devices_all = devices_all;
 
         Self {
             wirehose,

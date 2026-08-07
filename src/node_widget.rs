@@ -33,6 +33,7 @@ pub struct NodeWidget<'a> {
     device_kind: Option<DeviceKind>,
     node: &'a view::Node,
     selected: bool,
+    hidden: bool,
 }
 
 impl<'a> NodeWidget<'a> {
@@ -41,12 +42,14 @@ impl<'a> NodeWidget<'a> {
         device_kind: Option<DeviceKind>,
         node: &'a view::Node,
         selected: bool,
+        hidden: bool,
     ) -> Self {
         Self {
             config,
             device_kind,
             node,
             selected,
+            hidden,
         }
     }
 
@@ -174,11 +177,17 @@ impl StatefulWidget for NodeWidget<'_> {
             self.device_kind,
             self.node,
             self.selected,
+            self.hidden,
         )
         .render(header_area, buf, mouse_areas);
 
         // Render volume bar and (if enabled) peak meter
-        let volume = VolumeWidget::new(self.config, self.node, self.selected);
+        let volume = VolumeWidget::new(
+            self.config,
+            self.node,
+            self.selected,
+            self.hidden,
+        );
         if self.config.peaks == Peaks::Off {
             let layout = Layout::default()
                 .direction(Direction::Horizontal)
@@ -256,6 +265,7 @@ struct HeaderWidget<'a> {
     device_kind: Option<DeviceKind>,
     node: &'a view::Node,
     selected: bool,
+    hidden: bool,
 }
 
 impl<'a> HeaderWidget<'a> {
@@ -264,12 +274,14 @@ impl<'a> HeaderWidget<'a> {
         device_kind: Option<DeviceKind>,
         node: &'a view::Node,
         selected: bool,
+        hidden: bool,
     ) -> Self {
         Self {
             config,
             device_kind,
             node,
             selected,
+            hidden,
         }
     }
 
@@ -286,26 +298,35 @@ impl<'a> HeaderWidget<'a> {
         }
     }
 
+    /// Patches `row_hidden` onto `base` when this row is hidden - a no-op
+    /// (`row_hidden` defaults to an empty `Style`) unless a theme
+    /// explicitly sets it.
+    fn hidden_style(&self, base: Style) -> Style {
+        if self.hidden {
+            base.patch(self.config.theme.row_hidden)
+        } else {
+            base
+        }
+    }
+
     fn target_line(&self) -> Line<'_> {
+        let target_style =
+            self.hidden_style(self.text_style(self.config.theme.node_target));
         match self.node.target {
             Some(view::Target::Default) => {
                 // Add the default target indicator
                 Line::from(vec![
                     Span::styled(
                         &self.config.char_set.default_stream,
-                        self.config.theme.default_stream,
+                        self.hidden_style(self.config.theme.default_stream),
                     ),
                     Span::from(" "),
-                    Span::styled(
-                        &self.node.target_title,
-                        self.text_style(self.config.theme.node_target),
-                    ),
+                    Span::styled(&self.node.target_title, target_style),
                 ])
             }
-            _ => Line::from(Span::styled(
-                &self.node.target_title,
-                self.text_style(self.config.theme.node_target),
-            )),
+            _ => {
+                Line::from(Span::styled(&self.node.target_title, target_style))
+            }
         }
     }
 
@@ -313,18 +334,23 @@ impl<'a> HeaderWidget<'a> {
         let default_span = if is_default(self.node, self.device_kind) {
             Span::styled(
                 &self.config.char_set.default_device,
-                self.config.theme.default_device,
+                self.hidden_style(self.config.theme.default_device),
             )
         } else {
             Span::from(" ")
         };
+        let title_style =
+            self.hidden_style(self.text_style(self.config.theme.node_title));
+        let hidden_prefix = if self.hidden {
+            Span::styled(&self.config.char_set.hidden_instance, title_style)
+        } else {
+            Span::from("")
+        };
         Line::from(vec![
             default_span,
             Span::from(" "),
-            Span::styled(
-                &self.node.title,
-                self.text_style(self.config.theme.node_title),
-            ),
+            hidden_prefix,
+            Span::styled(&self.node.title, title_style),
         ])
     }
 }
@@ -397,14 +423,21 @@ struct VolumeWidget<'a> {
     config: &'a Config,
     node: &'a view::Node,
     selected: bool,
+    hidden: bool,
 }
 
 impl<'a> VolumeWidget<'a> {
-    fn new(config: &'a Config, node: &'a view::Node, selected: bool) -> Self {
+    fn new(
+        config: &'a Config,
+        node: &'a view::Node,
+        selected: bool,
+        hidden: bool,
+    ) -> Self {
         Self {
             config,
             node,
             selected,
+            hidden,
         }
     }
 
@@ -414,6 +447,15 @@ impl<'a> VolumeWidget<'a> {
             style
         } else {
             style.patch(self.config.theme.row_unselected)
+        }
+    }
+
+    /// See `HeaderWidget::hidden_style`.
+    fn hidden_style(&self, base: Style) -> Style {
+        if self.hidden {
+            base.patch(self.config.theme.row_hidden)
+        } else {
+            base
         }
     }
 }
@@ -443,12 +485,11 @@ impl StatefulWidget for VolumeWidget<'_> {
             let volume = mean.cbrt();
             let percent = (volume * 100.0).round() as u32;
 
-            Line::from(Span::styled(
-                format!("{percent}%"),
-                self.text_style(self.config.theme.volume),
-            ))
-            .alignment(Alignment::Right)
-            .render(volume_label, buf);
+            let volume_style =
+                self.hidden_style(self.text_style(self.config.theme.volume));
+            Line::from(Span::styled(format!("{percent}%"), volume_style))
+                .alignment(Alignment::Right)
+                .render(volume_label, buf);
 
             let count = ((volume.clamp(0.0, max_volume) / max_volume)
                 * volume_bar.width as f32)

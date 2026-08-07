@@ -34,6 +34,7 @@ pub struct ThemeOverlay {
     // through config_profile, in both the node list and the Configuration tab.
     row_selected: Option<StyleDef>,
     row_unselected: Option<StyleDef>,
+    row_hidden: Option<StyleDef>,
     dropdown_icon: Option<StyleDef>,
     dropdown_border: Option<StyleDef>,
     dropdown_item: Option<StyleDef>,
@@ -116,6 +117,7 @@ impl TryFrom<ThemeOverlay> for Theme {
         set!(config_profile);
         set!(row_selected);
         set!(row_unselected);
+        set!(row_hidden);
         set!(dropdown_icon);
         set!(dropdown_border);
         set!(dropdown_item);
@@ -154,6 +156,7 @@ impl Default for Theme {
             config_profile: Style::default(),
             row_selected: Style::default(),
             row_unselected: Style::default(),
+            row_hidden: Style::default(),
             dropdown_icon: Style::default(),
             dropdown_border: Style::default(),
             dropdown_item: Style::default(),
@@ -201,6 +204,7 @@ impl Theme {
             config_profile: Style::default(),
             row_selected: Style::default(),
             row_unselected: Style::default(),
+            row_hidden: Style::default(),
             dropdown_icon: Style::default(),
             dropdown_border: Style::default(),
             dropdown_item: Style::default(),
@@ -237,6 +241,7 @@ impl Theme {
             config_profile: Style::default(),
             row_selected: Style::default(),
             row_unselected: Style::default(),
+            row_hidden: Style::default(),
             dropdown_icon: Style::default(),
             dropdown_border: Style::default(),
             dropdown_item: Style::default(),

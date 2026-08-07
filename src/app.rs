@@ -54,6 +54,7 @@ pub enum Action {
     MoveFirst,
     MoveLast,
     ToggleMute,
+    ToggleHiddenInstance,
     SetRelativeVolume(f32),
     SetDefault,
     ActivateDropdown,
@@ -89,6 +90,9 @@ impl std::fmt::Display for Action {
             }
             Action::SetTarget(_) => write!(f, "Set target"),
             Action::ToggleMute => write!(f, "Toggle mute"),
+            Action::ToggleHiddenInstance => {
+                write!(f, "Hide/show for this instance only")
+            }
             Action::SetAbsoluteVolume(vol) => {
                 write!(f, "Set volume to {}%", Self::format_percentage(*vol))
             }
@@ -223,6 +227,10 @@ pub struct App<'a> {
     /// Object IDs that are currently visible (including any display
     /// dependencies)
     visible_objects: HashSet<ObjectId>,
+    /// Object IDs hidden for this instance only - never persisted, never
+    /// synced to other instances. Hidden objects sink to the bottom of
+    /// their list and are excluded from capture.
+    hidden_instance: HashSet<ObjectId>,
     /// Callback for peak ballistics.
     peak_processor: Arc<dyn PeakProcessor>,
     /// Objects eligible for capture.
@@ -281,6 +289,7 @@ impl<'a> App<'a> {
             drag_row: None,
             help_position: None,
             visible_objects: HashSet::new(),
+            hidden_instance: HashSet::new(),
             peak_processor: Arc::new(peak_processor),
             capturable_objects: HashSet::new(),
             capturing_objects: HashSet::new(),
@@ -311,6 +320,7 @@ impl<'a> App<'a> {
                     &self.state,
                     &self.config.names,
                     &self.config.filters,
+                    &self.hidden_instance,
                 );
             }
             self.state_dirty = false;
@@ -365,6 +375,7 @@ impl<'a> App<'a> {
             current_tab_index: self.current_tab_index,
             view: &self.view,
             config: &self.config,
+            hidden_instance: &self.hidden_instance,
         };
         let mut widget_state = AppWidgetState {
             mouse_areas: &mut self.mouse_areas,
@@ -476,6 +487,10 @@ impl<'a> App<'a> {
             if estimate >= max && !self.capturing_objects.contains(&object_id) {
                 return;
             }
+        }
+
+        if self.hidden_instance.contains(&object_id) {
+            return;
         }
 
         let Some(node) = self.state.nodes.get(&object_id) else {
@@ -863,6 +878,27 @@ impl Handle for Action {
             Action::ToggleMute => {
                 current_list!(app).toggle_mute(&app.view);
             }
+            Action::ToggleHiddenInstance => {
+                if let Some(object_id) = current_list!(app).selected {
+                    if app.hidden_instance.remove(&object_id) {
+                        // Unhidden - nothing proactively resumes a
+                        // capture just because eligibility didn't change,
+                        // so re-trigger it here if it's still capturable.
+                        if app.capturable_objects.contains(&object_id) {
+                            app.start_capture(object_id);
+                        }
+                    } else {
+                        app.hidden_instance.insert(object_id);
+                        // start_capture()'s hidden_instance check only
+                        // blocks new captures - an already-running one
+                        // needs to be stopped explicitly here.
+                        app.stop_capture(object_id);
+                    }
+                    // Hiding/unhiding changes list ordering, which is
+                    // computed in View::from() - force a rebuild.
+                    app.state_dirty = true;
+                }
+            }
             Action::SetAbsoluteVolume(volume) => {
                 let max = app
                     .config
@@ -985,6 +1021,7 @@ pub struct AppWidget<'a, 'b> {
     current_tab_index: usize,
     view: &'a View<'b>,
     config: &'a Config,
+    hidden_instance: &'a HashSet<ObjectId>,
 }
 
 pub struct AppWidgetState<'a> {
@@ -1050,6 +1087,7 @@ impl<'a> StatefulWidget for AppWidget<'a, '_> {
             object_list: &mut state.tabs[self.current_tab_index].list,
             view: self.view,
             config: self.config,
+            hidden_instance: self.hidden_instance,
         };
         widget.render(list_area, buf, state.mouse_areas);
 
@@ -1176,8 +1214,13 @@ mod tests {
         for event in events {
             event.handle(&mut app).unwrap();
         }
-        app.view =
-            View::from(wirehose, &app.state, &app.config.names, &Vec::new());
+        app.view = View::from(
+            wirehose,
+            &app.state,
+            &app.config.names,
+            &Vec::new(),
+            &app.hidden_instance,
+        );
 
         // Select the node
         Action::SelectObject(object_id).handle(&mut app).unwrap();
@@ -1755,5 +1798,87 @@ mod tests {
         // Fewer eligible nodes than the cap - everything stays captured,
         // nothing gets rotated out.
         assert_eq!(app.capturing_objects.len(), 3);
+    }
+
+    #[test]
+    fn toggle_hidden_instance_hides_and_shows_selected_object() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        let id = ObjectId::from_raw_id(0);
+        app.state_dirty = false;
+
+        assert!(Action::ToggleHiddenInstance.handle(&mut app).unwrap());
+        assert!(app.hidden_instance.contains(&id));
+        assert!(app.state_dirty);
+
+        app.state_dirty = false;
+        assert!(Action::ToggleHiddenInstance.handle(&mut app).unwrap());
+        assert!(!app.hidden_instance.contains(&id));
+        assert!(app.state_dirty);
+    }
+
+    #[test]
+    fn toggle_hidden_instance_stops_capture_when_hiding() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let mut app = fixture(&wirehose);
+        let id = ObjectId::from_raw_id(0);
+
+        app.capturable_objects.insert(id);
+        app.capturing_objects.insert(id);
+        commands.borrow_mut().clear();
+
+        Action::ToggleHiddenInstance.handle(&mut app).unwrap();
+
+        assert!(app.hidden_instance.contains(&id));
+        assert!(!app.capturing_objects.contains(&id));
+        assert_eq!(
+            commands.borrow_mut().pop_front(),
+            Some(mock::MockCommand::NodeCaptureStop(id))
+        );
+    }
+
+    #[test]
+    fn toggle_hidden_instance_resumes_capture_when_unhiding() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let mut app = fixture(&wirehose);
+        let id = ObjectId::from_raw_id(0);
+
+        app.hidden_instance.insert(id);
+        app.capturable_objects.insert(id);
+        commands.borrow_mut().clear();
+
+        Action::ToggleHiddenInstance.handle(&mut app).unwrap();
+
+        assert!(!app.hidden_instance.contains(&id));
+        assert!(app.capturing_objects.contains(&id));
+        assert_eq!(
+            commands.borrow_mut().pop_front(),
+            Some(mock::MockCommand::NodeCaptureStart(id))
+        );
+    }
+
+    #[test]
+    fn start_capture_skips_hidden_instance_objects() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let (_, event_rx) = mpsc::channel();
+        let config = Config::from_toml_str("lazy_capture = false");
+        let mut app = App::new(&wirehose, event_rx, config);
+
+        let id = ObjectId::from_raw_id(1);
+        add_capturable_node(&mut app, id);
+        // Reset state: node exists but isn't capturing yet
+        app.capturing_objects.clear();
+        app.capturable_objects.clear();
+        app.hidden_instance.insert(id);
+        commands.borrow_mut().clear();
+
+        app.set_capture_eligibility(CaptureEligibility::Eligible(id));
+
+        assert!(app.capturable_objects.contains(&id));
+        assert!(!app.capturing_objects.contains(&id));
+        assert!(commands.borrow().is_empty());
     }
 }

@@ -17,6 +17,7 @@ impl Keybinding {
         HashMap::from([
             (event(KeyCode::Char('q')), Action::Exit),
             (event(KeyCode::Char('m')), Action::ToggleMute),
+            (event(KeyCode::Char('t')), Action::ToggleHiddenInstance),
             (event(KeyCode::Char('d')), Action::SetDefault),
             (event(KeyCode::Char('l')), Action::SetRelativeVolume(0.01)),
             (event(KeyCode::Right), Action::SetRelativeVolume(0.01)),

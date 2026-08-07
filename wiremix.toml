@@ -124,6 +124,9 @@ keybindings = [
  { key = { Char = "q" }, action = "Exit" },
  # Toggle mute for the selected item
  { key = { Char = "m" }, action = "ToggleMute" },
+ # Hide/show the selected item for this instance only (not saved, not
+ # synced to other instances)
+ { key = { Char = "t" }, action = "ToggleHiddenInstance" },
  # Make the selected item in Input/Output Devices the default endpoint
  { key = { Char = "d" }, action = "SetDefault" },
  # Increase the volume of the selected item by 1%
@@ -415,6 +418,13 @@ row_selected = { }
 # competing with the selected row's highlight. Empty ({ }) by default,
 # i.e. no change from an item's normal look.
 row_unselected = { }
+# Patched onto a hidden row's own text styles (node_title, node_target,
+# volume, config_device, config_profile) - only whichever of
+# fg/bg/add_modifier you set here override the base style. A faint tint
+# (e.g. DarkGray) is a typical choice, to visually distinguish hidden
+# items from normal ones without hiding them entirely. Empty ({ }) by
+# default, i.e. no change from an item's normal look.
+row_hidden = { }
 # Dropdown marker next to the profiles in the Configuration tab
 dropdown_icon = { }
 # Border around dropdowns
@@ -463,6 +473,10 @@ help_more = { fg = "DarkGray" }
 default_device = "◇"
 # Marks the default endpoint on the Playback/Recording tabs
 default_stream = "◇"
+# Prefix prepended to a hidden item's title. Unconstrained width (unlike
+# most glyphs above), since it's meant to be a short text tag rather than
+# a single character - e.g. try "🙈 " for an emoji alternative.
+hidden_instance = "[hide] "
 # The selection indicator in a tab
 selector_top = "░"
 selector_middle = "▒"
@@ -537,6 +551,7 @@ config_device = { }
 config_profile = { }
 row_selected = { }
 row_unselected = { }
+row_hidden = { }
 dropdown_icon = { }
 dropdown_border = { }
 dropdown_item = { }
@@ -569,6 +584,7 @@ config_device = { }
 config_profile = { }
 row_selected = { }
 row_unselected = { }
+row_hidden = { }
 dropdown_icon = { }
 dropdown_border = { }
 dropdown_item = { }
@@ -581,6 +597,7 @@ help_more = { }
 [char_sets.compat]
 default_device = "◊"
 default_stream = "◊"
+hidden_instance = "[hide] "
 selector_top = "░"
 selector_middle = "▒"
 selector_bottom = "░"
@@ -610,6 +627,7 @@ help_border = "Plain"
 [char_sets.extracompat]
 default_device = "*"
 default_stream = "*"
+hidden_instance = "[hide] "
 selector_top = "-"
 selector_middle = "="
 selector_bottom = "-"

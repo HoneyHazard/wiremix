@@ -158,6 +158,7 @@ pub struct NameOverride {
 pub struct CharSet {
     pub default_device: String,
     pub default_stream: String,
+    pub hidden_instance: String,
     pub selector_top: String,
     pub selector_middle: String,
     pub selector_bottom: String,
@@ -210,6 +211,7 @@ pub struct Theme {
     pub config_profile: Style,
     pub row_selected: Style,
     pub row_unselected: Style,
+    pub row_hidden: Style,
     pub dropdown_icon: Style,
     pub dropdown_border: Style,
     pub dropdown_item: Style,

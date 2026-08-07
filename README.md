@@ -105,6 +105,7 @@ less-intuitive mouse controls are:
 | ------------- | ----------------------- |
 | q             | Quit                    |
 | m             | Toggle mute             |
+| t             | Hide/show (this instance only) |
 | d             | Set default source/sink |
 | l/Right arrow | Increment volume        |
 | h/Left arrow  | Decrement volume        |
