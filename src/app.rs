@@ -233,8 +233,10 @@ pub struct App<'a> {
     /// rotation window should start. Only meaningful when
     /// config.max_concurrent_captures is set.
     capture_rotation_start: usize,
-    /// When the capture rotation window last advanced.
-    last_capture_rotation: Instant,
+    /// Rendered frames elapsed since the capture rotation window last
+    /// advanced. See ROTATION_FRAME_INTERVAL - deliberately a frame count,
+    /// not a wall-clock duration.
+    frames_since_rotation: u32,
 }
 
 macro_rules! current_list {
@@ -283,7 +285,7 @@ impl<'a> App<'a> {
             capturable_objects: HashSet::new(),
             capturing_objects: HashSet::new(),
             capture_rotation_start: 0,
-            last_capture_rotation: Instant::now(),
+            frames_since_rotation: 0,
         }
     }
 
@@ -324,14 +326,15 @@ impl<'a> App<'a> {
                 self.update_capturing();
             }
 
-            // Runs every iteration (not just on visibility change) since
-            // rotation is time-driven, not scroll-driven. Cheap to call when
-            // there's nothing to do - an elapsed-time check and, usually, an
-            // early return.
-            self.rotate_capturing();
-
             if needs_render && pacer.is_time_to_render() {
                 needs_render = false;
+
+                // Tied to the render cadence itself (see
+                // ROTATION_FRAME_INTERVAL) rather than a wall-clock timer of
+                // its own: rotate_capturing() is only ever called here, in
+                // step with an actually-rendered frame, so counting frames
+                // there is exact rather than an approximation of one.
+                self.rotate_capturing();
 
                 self.mouse_areas.clear();
 
@@ -532,27 +535,46 @@ impl<'a> App<'a> {
         }
     }
 
-    /// How often to swap which nodes are actively captured when
+    /// How many rendered frames pass between capture rotation slides, when
     /// max_concurrent_captures limits capture to fewer than are eligible.
-    /// Deliberately much slower than typical UI/render cadence - rotating on
-    /// every frame would create more PipeWire stream churn than not
-    /// rotating at all, defeating the purpose of capping concurrency in the
-    /// first place.
-    const CAPTURE_ROTATION_INTERVAL: Duration = Duration::from_secs(3);
+    /// Deliberately a multiple of the render cadence itself (see
+    /// RenderPacer and rotate_capturing()'s call site) rather than an
+    /// independent wall-clock timer of its own: rotation speed - and the
+    /// PipeWire stream churn it costs - then scales automatically with
+    /// whatever fps a user has configured, with no second unrelated timer
+    /// to reason about. Every frame would create more stream churn than not
+    /// rotating at all (see rotate_capturing()'s doc comment); every 3rd
+    /// frame keeps swap rates to a handful per second even at high fps,
+    /// while still giving near-real-time coverage at typical settings -
+    /// e.g. at 10-20fps, sweeping through ~10 eligible objects at
+    /// max_concurrent_captures=2 takes well under 3 seconds.
+    const ROTATION_FRAME_INTERVAL: u32 = 3;
 
     /// If max_concurrent_captures is set and more objects are eligible for
     /// capture than that, periodically swap which subset is actually being
     /// captured so every eligible object eventually gets sampled instead of
     /// whichever ones happened to become eligible first (and then stay
     /// captured forever, starving everything else).
+    ///
+    /// Slides the window by exactly one object per tick, rather than
+    /// jumping it forward by the full window size - so at most one capture
+    /// starts and one stops per tick, and everything else already in the
+    /// window is left alone. A full-window jump every tick would mean every
+    /// currently-captured object goes stale for the whole interval and then
+    /// *all* of them change at once; a one-at-a-time slide instead gives a
+    /// continuous, staggered trickle where something is always freshly
+    /// updated.
+    ///
+    /// Only ever called once per actually-rendered frame (see its call site
+    /// in run()), so counting frames via frames_since_rotation is exact.
     fn rotate_capturing(&mut self) {
         let Some(max) = self.config.max_concurrent_captures else {
             return;
         };
 
-        if self.last_capture_rotation.elapsed()
-            < Self::CAPTURE_ROTATION_INTERVAL
-        {
+        self.frames_since_rotation =
+            self.frames_since_rotation.saturating_add(1);
+        if self.frames_since_rotation < Self::ROTATION_FRAME_INTERVAL {
             return;
         }
 
@@ -570,12 +592,13 @@ impl<'a> App<'a> {
 
         if eligible.len() <= max {
             // Everything eligible already fits under the cap - nothing to
-            // rotate. Leave last_capture_rotation alone so a rotation isn't
-            // "owed" the moment the eligible set grows past max again.
+            // rotate. Leave frames_since_rotation alone (already at or past
+            // the threshold) so a rotation isn't "owed" extra delay the
+            // moment the eligible set grows past max again.
             return;
         }
 
-        self.last_capture_rotation = Instant::now();
+        self.frames_since_rotation = 0;
 
         // Sorting gives a stable, deterministic rotation order across ticks
         // (HashSet iteration order isn't stable) so each tick advances
@@ -587,7 +610,7 @@ impl<'a> App<'a> {
         let start = self.capture_rotation_start % n;
         let window: HashSet<ObjectId> =
             (0..max.min(n)).map(|i| eligible[(start + i) % n]).collect();
-        self.capture_rotation_start = (start + max) % n;
+        self.capture_rotation_start = (start + 1) % n;
 
         let need_to_stop: Vec<_> = self
             .capturing_objects
@@ -1541,12 +1564,10 @@ mod tests {
         );
     }
 
-    /// Back-dates last_capture_rotation so the next rotate_capturing() call
-    /// doesn't have to wait out the real interval.
+    /// Sets frames_since_rotation so the next rotate_capturing() call
+    /// doesn't have to wait out the real frame-count interval.
     fn force_rotation_due(app: &mut App<'_>) {
-        app.last_capture_rotation = std::time::Instant::now()
-            .checked_sub(App::CAPTURE_ROTATION_INTERVAL * 2)
-            .unwrap();
+        app.frames_since_rotation = App::ROTATION_FRAME_INTERVAL;
     }
 
     #[test]
