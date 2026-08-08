@@ -37,10 +37,12 @@ theme = "default"
 row_selected_extend_above = false
 row_selected_extend_below = false
 
-# If true, draw a divider line in the gap between items, styled by the
-# divider theme key and using the divider char_set glyph. Off by default -
-# the gap between items already exists either way, so this only changes
-# what's drawn in space that was already blank, never the list's layout.
+# If true, draw a divider line centered in the gap between items - one
+# blank row above it, one below - styled by the divider theme key and
+# using the divider char_set glyph. This reserves one extra row per item
+# to center the divider symmetrically, so fewer items fit on screen at
+# once than with this off. Off by default, leaving the list's layout
+# exactly as it is otherwise.
 show_dividers = false
 
 # Initial tab

@@ -268,14 +268,20 @@ impl ObjectList {
 
     /// Returns a set of object IDs of the visible objects. This includes all
     /// dependencies that affect the display of the objects.
+    ///
+    /// See `update()` for why `show_dividers` is needed here.
     pub fn visible_objects(
         &self,
         area: &Rect,
         view: &view::View,
+        show_dividers: bool,
     ) -> HashSet<ObjectId> {
         let objects = view.object_ids(self.list_kind);
 
-        let last = cmp::min(objects.len(), self.top + self.visible_count(area));
+        let last = cmp::min(
+            objects.len(),
+            self.top + self.visible_count(area, show_dividers),
+        );
 
         // Always include object 0 - the global PipeWire state.
         let mut visible_objects = HashSet::from([ObjectId::from_raw_id(0)]);
@@ -309,21 +315,33 @@ impl ObjectList {
     }
 
     /// Returns the number of objects visible.
-    fn visible_count(&self, area: &Rect) -> usize {
+    fn visible_count(&self, area: &Rect, show_dividers: bool) -> usize {
         let (_, list_area, _) = self.areas(area);
-        let full_height = match self.list_kind {
-            ListKind::Node(_) => {
-                NodeWidget::height().saturating_add(NodeWidget::spacing())
-            }
+        let (spacing, height) = match self.list_kind {
+            ListKind::Node(_) => (NodeWidget::spacing(), NodeWidget::height()),
             ListKind::Device => {
-                DeviceWidget::height().saturating_add(DeviceWidget::spacing())
+                (DeviceWidget::spacing(), DeviceWidget::height())
             }
         };
+        // One extra row of spacing to center a divider between items - see
+        // the same +1 in ObjectListWidget::render() and the comment on
+        // render_divider() below.
+        let spacing = if show_dividers { spacing + 1 } else { spacing };
+        let full_height = height.saturating_add(spacing);
         (list_area.height / full_height) as usize
     }
 
     /// Reconciles changes to objects, viewport, and selection.
-    pub fn update(&mut self, area: Rect, view: &view::View) {
+    ///
+    /// `show_dividers` must match `Config::show_dividers`, so that the
+    /// scroll/viewport math here agrees with the extra row `render()`
+    /// reserves per item when dividers are on - see `visible_count()`.
+    pub fn update(
+        &mut self,
+        area: Rect,
+        view: &view::View,
+        show_dividers: bool,
+    ) {
         let selected_index = self.selected_index(view).or_else(|| {
             // There's nothing selected! Select the first item and try again.
             self.select(view.next_id(self.list_kind, None));
@@ -332,7 +350,7 @@ impl ObjectList {
 
         let objects_len = view.len(self.list_kind);
 
-        let visible_count = self.visible_count(&area);
+        let visible_count = self.visible_count(&area, show_dividers);
         self.page_size = visible_count;
 
         // If objects were removed and the viewport is now below the visible
@@ -475,14 +493,17 @@ fn extend_selected_row(
     }
 }
 
-/// Draws a one-row divider line spanning `object_area`'s width, in the gap
-/// immediately below it, when `config.show_dividers` is set. A no-op
-/// (nothing drawn, no space reserved) when it isn't - dividers only ever
-/// use space that the existing gap between items (NodeWidget::spacing()/
-/// DeviceWidget::spacing()) already reserves, so turning this on never
-/// changes the list's layout, only what's drawn in space that was already
-/// blank. Clipped to `list_area` so it can never bleed into a neighboring
-/// item or past the list into the footer/tab bar.
+/// Draws a one-row divider line spanning `object_area`'s width, centered in
+/// the gap below it, when `config.show_dividers` is set. A no-op (nothing
+/// drawn) when it isn't. Callers reserve one extra row of spacing whenever
+/// `show_dividers` is on specifically so this can center the divider - one
+/// blank row above it, one below - instead of it hugging whichever item
+/// happens to sit above; with `show_dividers` off, spacing (and therefore
+/// the whole list's layout) is untouched, matching stock wiremix exactly.
+/// See `NodeWidget::spacing()`/`DeviceWidget::spacing()` and the `+ 1` in
+/// `ObjectListWidget::render()`/`ObjectList::visible_count()`. Clipped to
+/// `list_area` so it can never bleed into a neighboring item or past the
+/// list into the footer/tab bar.
 fn render_divider(
     buf: &mut Buffer,
     config: &Config,
@@ -495,7 +516,12 @@ fn render_divider(
 
     let divider_area = Rect {
         x: object_area.x,
-        y: object_area.y.saturating_add(object_area.height),
+        // + 1 to skip the first (blank) row of the gap the caller reserved,
+        // landing the divider on the middle row instead of the first.
+        y: object_area
+            .y
+            .saturating_add(object_area.height)
+            .saturating_add(1),
         width: object_area.width,
         height: 1,
     };
@@ -725,6 +751,14 @@ impl StatefulWidget for &mut ObjectListWidget<'_, '_> {
                 (DeviceWidget::spacing(), DeviceWidget::height())
             }
         };
+        // One extra row of spacing to center a divider between items - see
+        // ObjectList::visible_count() and the comment on render_divider()
+        // below. Layout stays exactly as it is without show_dividers.
+        let spacing = if self.config.show_dividers {
+            spacing + 1
+        } else {
+            spacing
+        };
 
         let full_object_height = height.saturating_add(spacing);
         let objects_visible = (list_area.height / full_object_height) as usize;
@@ -907,7 +941,7 @@ mod tests {
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
 
         object_list.up(&view);
-        object_list.update(rect, &view);
+        object_list.update(rect, &view, false);
         assert_eq!(object_list.top, 0);
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
     }
@@ -938,7 +972,7 @@ mod tests {
             object_list.down(&view);
         }
 
-        object_list.update(rect, &view);
+        object_list.update(rect, &view, false);
         assert_eq!(object_list.top, 7);
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(10)));
     }
@@ -1049,7 +1083,7 @@ mod tests {
             ObjectList::new(ListKind::Node(NodeKind::All), None);
 
         // Start at top
-        let visible = object_list.visible_objects(&rect, &view);
+        let visible = object_list.visible_objects(&rect, &view, false);
         assert_eq!(visible.len(), 4);
         assert!(visible.contains(&ObjectId::from_raw_id(0)));
         assert!(visible.contains(&ObjectId::from_raw_id(1)));
@@ -1058,7 +1092,7 @@ mod tests {
 
         // Scroll down
         object_list.top = 5;
-        let visible = object_list.visible_objects(&rect, &view);
+        let visible = object_list.visible_objects(&rect, &view, false);
         assert_eq!(visible.len(), 4);
         assert!(visible.contains(&ObjectId::from_raw_id(0)));
         assert!(visible.contains(&ObjectId::from_raw_id(6)));
@@ -1067,12 +1101,39 @@ mod tests {
 
         // Scroll up
         object_list.top = 4;
-        let visible = object_list.visible_objects(&rect, &view);
+        let visible = object_list.visible_objects(&rect, &view, false);
         assert_eq!(visible.len(), 4);
         assert!(visible.contains(&ObjectId::from_raw_id(0)));
         assert!(visible.contains(&ObjectId::from_raw_id(5)));
         assert!(visible.contains(&ObjectId::from_raw_id(6)));
         assert!(visible.contains(&ObjectId::from_raw_id(7)));
+    }
+
+    #[test]
+    fn show_dividers_true_reserves_extra_row_per_item() {
+        let (state, wirehose) = init();
+        let view = View::from(
+            &wirehose,
+            &state,
+            &config::Names::default(),
+            &Vec::new(),
+        );
+
+        // Exactly enough room for 3 items at the default (no-divider)
+        // spacing - with show_dividers's extra row per item, only 2 now
+        // fit. This is the same rect/expected-4 case
+        // visible_objects_changes_with_scroll already covers for
+        // show_dividers = false; the point here is the contrast with
+        // show_dividers = true, not re-proving the false case.
+        let height = NodeWidget::height() + NodeWidget::spacing();
+        let rect = Rect::new(0, 0, 80, height * 3 + 2);
+        let object_list = ObjectList::new(ListKind::Node(NodeKind::All), None);
+
+        let without_dividers = object_list.visible_objects(&rect, &view, false);
+        let with_dividers = object_list.visible_objects(&rect, &view, true);
+
+        assert_eq!(without_dividers.len(), 4); // 3 items + object 0
+        assert_eq!(with_dividers.len(), 3); // 2 items + object 0
     }
 
     #[test]
@@ -1104,7 +1165,7 @@ mod tests {
         let rect = Rect::new(0, 0, 80, height + 2);
         let object_list = ObjectList::new(ListKind::Node(NodeKind::All), None);
 
-        let visible = object_list.visible_objects(&rect, &view);
+        let visible = object_list.visible_objects(&rect, &view, false);
         assert_eq!(visible.len(), 3);
         assert!(visible.contains(&ObjectId::from_raw_id(0)));
         assert!(visible.contains(&ObjectId::from_raw_id(1)));
@@ -1163,7 +1224,7 @@ mod tests {
         let rect = Rect::new(0, 0, 80, height + 2);
         let object_list = ObjectList::new(ListKind::Node(NodeKind::All), None);
 
-        let visible = object_list.visible_objects(&rect, &view);
+        let visible = object_list.visible_objects(&rect, &view, false);
         assert_eq!(visible.len(), 3);
         assert!(visible.contains(&ObjectId::from_raw_id(0)));
         assert!(visible.contains(&ObjectId::from_raw_id(1)));
@@ -1215,7 +1276,7 @@ mod tests {
         let object_list =
             ObjectList::new(ListKind::Node(NodeKind::Playback), None);
 
-        let visible = object_list.visible_objects(&rect, &view);
+        let visible = object_list.visible_objects(&rect, &view, false);
         assert!(visible.contains(&stream_id));
         assert!(visible.contains(&sink_id));
     }
@@ -1284,7 +1345,7 @@ mod tests {
         let object_list =
             ObjectList::new(ListKind::Node(NodeKind::Playback), None);
 
-        let visible = object_list.visible_objects(&rect, &view);
+        let visible = object_list.visible_objects(&rect, &view, false);
         assert!(visible.contains(&stream_id));
         assert!(visible.contains(&sink_id));
         assert!(visible.contains(&sink_client_id));
@@ -1376,7 +1437,7 @@ mod tests {
         let object_list =
             ObjectList::new(ListKind::Node(NodeKind::Playback), None);
 
-        let visible = object_list.visible_objects(&rect, &view);
+        let visible = object_list.visible_objects(&rect, &view, false);
         assert!(visible.contains(&stream_id));
         assert!(visible.contains(&sink_id));
         assert!(visible.contains(&sink_device_id));
@@ -1422,7 +1483,7 @@ mod tests {
         let object_list =
             ObjectList::new(ListKind::Node(NodeKind::Playback), None);
 
-        let visible = object_list.visible_objects(&rect, &view);
+        let visible = object_list.visible_objects(&rect, &view, false);
         assert!(visible.contains(&stream_id));
         assert!(visible.contains(&sink_id));
     }
@@ -1467,7 +1528,7 @@ mod tests {
         let object_list =
             ObjectList::new(ListKind::Node(NodeKind::Recording), None);
 
-        let visible = object_list.visible_objects(&rect, &view);
+        let visible = object_list.visible_objects(&rect, &view, false);
         assert!(visible.contains(&stream_id));
         assert!(visible.contains(&source_id));
     }
@@ -1578,7 +1639,15 @@ mod tests {
 
         render_divider(&mut buf, &config, object_area, list_area);
 
-        let divider_row_start = buf.index_of(0, 3);
+        // Row 3 (immediately below the item) stays blank - the divider is
+        // centered on row 4, leaving one blank row above it and (assuming
+        // the caller reserved the usual 3-row gap) one below.
+        let blank_row_start = buf.index_of(0, 3);
+        for cell in buf.content[blank_row_start..blank_row_start + 10].iter() {
+            assert_eq!(cell.symbol(), " ");
+        }
+
+        let divider_row_start = buf.index_of(0, 4);
         for cell in
             buf.content[divider_row_start..divider_row_start + 10].iter()
         {

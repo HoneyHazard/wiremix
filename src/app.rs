@@ -316,10 +316,17 @@ impl<'a> App<'a> {
             self.state_dirty = false;
 
             let frame = terminal.get_frame();
-            current_list!(self).update(frame.area(), &self.view);
+            current_list!(self).update(
+                frame.area(),
+                &self.view,
+                self.config.show_dividers,
+            );
 
-            let new_visible_objects =
-                current_list!(self).visible_objects(&frame.area(), &self.view);
+            let new_visible_objects = current_list!(self).visible_objects(
+                &frame.area(),
+                &self.view,
+                self.config.show_dividers,
+            );
             if new_visible_objects != self.visible_objects {
                 needs_render = true;
                 self.visible_objects = new_visible_objects;
