@@ -1106,6 +1106,10 @@ impl Handle for Action {
 
                     if app.hidden_permanent.contains(&object_id) {
                         app.stop_capture(object_id);
+                        // Release the selection - see the equivalent
+                        // comment in ToggleHiddenInstance above.
+                        current_list!(app)
+                            .release_hidden_selection(&app.view, object_id);
                     } else if app.capturable_objects.contains(&object_id) {
                         app.start_capture(object_id);
                     }
@@ -2113,6 +2117,7 @@ mod tests {
             &app.config.names,
             &Vec::new(),
             &app.hidden_instance,
+            &app.hidden_permanent,
         );
         Action::SelectObject(id1).handle(&mut app).unwrap();
 
@@ -2135,6 +2140,7 @@ mod tests {
             &app.config.names,
             &Vec::new(),
             &app.hidden_instance,
+            &app.hidden_permanent,
         );
         Action::SelectObject(id2).handle(&mut app).unwrap();
 
