@@ -142,6 +142,31 @@ impl ObjectList {
         }
     }
 
+    /// Releases the selection from `object_id`, which has just been
+    /// hidden, moving it to whatever comes right after it in `view`'s
+    /// current order (still the pre-hide order - the hidden item hasn't
+    /// sunk to the bottom yet, since that resorting only happens on the
+    /// next `View::from()` rebuild). Falls back to whatever comes right
+    /// before it if it was the last item, or to no selection at all if
+    /// it was the only item. Doesn't touch dropdown state, unlike
+    /// `down()`/`up()` - this is a reaction to hiding the selected item,
+    /// not a navigation keypress, so a dropdown being open isn't
+    /// relevant here.
+    pub fn release_hidden_selection(
+        &mut self,
+        view: &view::View,
+        object_id: ObjectId,
+    ) {
+        let candidate = view
+            .next_id(self.list_kind, Some(object_id))
+            .filter(|&id| id != object_id)
+            .or_else(|| {
+                view.previous_id(self.list_kind, Some(object_id))
+                    .filter(|&id| id != object_id)
+            });
+        self.select(candidate);
+    }
+
     fn dropdown_open(&mut self, view: &view::View) {
         let targets = match self.list_kind {
             ListKind::Node(_) => self

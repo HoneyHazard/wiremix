@@ -881,9 +881,11 @@ impl Handle for Action {
             Action::ToggleHiddenInstance => {
                 if let Some(object_id) = current_list!(app).selected {
                     if app.hidden_instance.remove(&object_id) {
-                        // Unhidden - nothing proactively resumes a
-                        // capture just because eligibility didn't change,
-                        // so re-trigger it here if it's still capturable.
+                        // Unhidden - hold onto the selection (the user
+                        // is still looking at this item), but nothing
+                        // proactively resumes a capture just because
+                        // eligibility didn't change, so re-trigger it
+                        // here if it's still capturable.
                         if app.capturable_objects.contains(&object_id) {
                             app.start_capture(object_id);
                         }
@@ -893,6 +895,12 @@ impl Handle for Action {
                         // blocks new captures - an already-running one
                         // needs to be stopped explicitly here.
                         app.stop_capture(object_id);
+                        // Release the selection rather than leave it
+                        // pinned to an item that's about to sink to the
+                        // bottom of the list - move it to whatever's
+                        // next in line instead.
+                        current_list!(app)
+                            .release_hidden_selection(&app.view, object_id);
                     }
                     // Hiding/unhiding changes list ordering, which is
                     // computed in View::from() - force a rebuild.
@@ -1237,6 +1245,35 @@ mod tests {
         StateEvent::NodeProperties { object_id, props }
             .handle(app)
             .unwrap();
+    }
+
+    /// Like `add_capturable_node`, but with everything `view::Node::from`
+    /// requires (via `?`) to actually appear in `app.view` - `node_name`,
+    /// `volumes`, `mute` - none of which `add_capturable_node` alone sets,
+    /// since capture-eligibility tests need a node in `app.state` but never
+    /// touch `app.view` at all.
+    fn add_playback_node(app: &mut App<'_>, object_id: ObjectId) {
+        let mut props = PropertyStore::default();
+        props.set_node_description(String::from("Test node"));
+        props.set_media_class(String::from("Stream/Output/Audio"));
+        props.set_node_name(format!("node-{}", u32::from(object_id)));
+        props.set_object_serial(u32::from(object_id) as u64);
+
+        StateEvent::NodeProperties { object_id, props }
+            .handle(app)
+            .unwrap();
+        StateEvent::NodeVolumes {
+            object_id,
+            volumes: vec![1.0],
+        }
+        .handle(app)
+        .unwrap();
+        StateEvent::NodeMute {
+            object_id,
+            mute: false,
+        }
+        .handle(app)
+        .unwrap();
     }
 
     #[test]
@@ -1811,10 +1848,83 @@ mod tests {
         assert!(app.hidden_instance.contains(&id));
         assert!(app.state_dirty);
 
+        // Hiding the only object releases the selection (see
+        // toggle_hidden_instance_clears_selection_when_hiding_only_item) -
+        // re-select it to verify toggling again un-hides it.
+        Action::SelectObject(id).handle(&mut app).unwrap();
+
         app.state_dirty = false;
         assert!(Action::ToggleHiddenInstance.handle(&mut app).unwrap());
         assert!(!app.hidden_instance.contains(&id));
         assert!(app.state_dirty);
+    }
+
+    #[test]
+    fn toggle_hidden_instance_clears_selection_when_hiding_only_item() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        let id = ObjectId::from_raw_id(0);
+        assert_eq!(current_list!(app).selected, Some(id));
+
+        Action::ToggleHiddenInstance.handle(&mut app).unwrap();
+
+        assert_eq!(current_list!(app).selected, None);
+    }
+
+    #[test]
+    fn toggle_hidden_instance_unhiding_keeps_selection() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        let id = ObjectId::from_raw_id(0);
+        app.hidden_instance.insert(id);
+
+        Action::ToggleHiddenInstance.handle(&mut app).unwrap();
+
+        assert_eq!(current_list!(app).selected, Some(id));
+    }
+
+    #[test]
+    fn toggle_hidden_instance_selects_next_when_hiding_middle_item() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        let id1 = ObjectId::from_raw_id(1);
+        let id2 = ObjectId::from_raw_id(2);
+        add_playback_node(&mut app, id1);
+        add_playback_node(&mut app, id2);
+        app.view = View::from(
+            app.wirehose,
+            &app.state,
+            &app.config.names,
+            &Vec::new(),
+            &app.hidden_instance,
+        );
+        Action::SelectObject(id1).handle(&mut app).unwrap();
+
+        Action::ToggleHiddenInstance.handle(&mut app).unwrap();
+
+        assert_eq!(current_list!(app).selected, Some(id2));
+    }
+
+    #[test]
+    fn toggle_hidden_instance_selects_previous_when_hiding_last_item() {
+        let wirehose = mock::WirehoseHandle::default();
+        let mut app = fixture(&wirehose);
+        let id1 = ObjectId::from_raw_id(1);
+        let id2 = ObjectId::from_raw_id(2);
+        add_playback_node(&mut app, id1);
+        add_playback_node(&mut app, id2);
+        app.view = View::from(
+            app.wirehose,
+            &app.state,
+            &app.config.names,
+            &Vec::new(),
+            &app.hidden_instance,
+        );
+        Action::SelectObject(id2).handle(&mut app).unwrap();
+
+        Action::ToggleHiddenInstance.handle(&mut app).unwrap();
+
+        assert_eq!(current_list!(app).selected, Some(id1));
     }
 
     #[test]

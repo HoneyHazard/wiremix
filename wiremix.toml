@@ -422,9 +422,8 @@ row_unselected = { }
 # volume, config_device, config_profile) - only whichever of
 # fg/bg/add_modifier you set here override the base style. A faint tint
 # (e.g. DarkGray) is a typical choice, to visually distinguish hidden
-# items from normal ones without hiding them entirely. Empty ({ }) by
-# default, i.e. no change from an item's normal look.
-row_hidden = { }
+# items from normal ones without hiding them entirely.
+row_hidden = { fg = "DarkGray" }
 # Dropdown marker next to the profiles in the Configuration tab
 dropdown_icon = { }
 # Border around dropdowns
@@ -551,7 +550,7 @@ config_device = { }
 config_profile = { }
 row_selected = { }
 row_unselected = { }
-row_hidden = { }
+row_hidden = { add_modifier = "DIM" }
 dropdown_icon = { }
 dropdown_border = { }
 dropdown_item = { }
