@@ -630,7 +630,12 @@ impl ObjectListWidget<'_, '_> {
             }
 
             if i < last_index {
-                render_divider(buf, self.config, object_area, context.list_area);
+                render_divider(
+                    buf,
+                    self.config,
+                    object_area,
+                    context.list_area,
+                );
             }
         }
 
@@ -722,7 +727,12 @@ impl ObjectListWidget<'_, '_> {
             }
 
             if i < last_index {
-                render_divider(buf, self.config, object_area, context.list_area);
+                render_divider(
+                    buf,
+                    self.config,
+                    object_area,
+                    context.list_area,
+                );
             }
         }
 
@@ -1029,6 +1039,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -1040,7 +1052,7 @@ mod tests {
         // Select first object, and let update() compute page_size (3) from
         // the 3-item-tall rect above.
         object_list.down(&view);
-        object_list.update(rect, &view);
+        object_list.update(rect, &view, false);
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
 
         object_list.page_down(&view);
@@ -1058,6 +1070,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -1066,18 +1080,18 @@ mod tests {
             ObjectList::new(ListKind::Node(NodeKind::All), None);
 
         object_list.down(&view);
-        object_list.update(rect, &view);
+        object_list.update(rect, &view, false);
 
         // Page down well past the last of the 10 mock nodes.
         for _ in 0..10 {
             object_list.page_down(&view);
-            object_list.update(rect, &view);
+            object_list.update(rect, &view, false);
         }
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(10)));
 
         for _ in 0..10 {
             object_list.page_up(&view);
-            object_list.update(rect, &view);
+            object_list.update(rect, &view, false);
         }
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(1)));
     }
@@ -1090,6 +1104,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         let height = NodeWidget::height() + NodeWidget::spacing();
@@ -1099,9 +1115,9 @@ mod tests {
 
         // Start in the middle of the 10 mock nodes.
         object_list.down(&view);
-        object_list.update(rect, &view);
+        object_list.update(rect, &view, false);
         object_list.page_down(&view);
-        object_list.update(rect, &view);
+        object_list.update(rect, &view, false);
 
         object_list.last(&view);
         assert_eq!(object_list.selected, Some(ObjectId::from_raw_id(10)));
@@ -1227,6 +1243,8 @@ mod tests {
             &state,
             &config::Names::default(),
             &Vec::new(),
+            &HashSet::new(),
+            &HashSet::new(),
         );
 
         // Exactly enough room for 3 items at the default (no-divider)
