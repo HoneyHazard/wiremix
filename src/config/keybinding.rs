@@ -17,6 +17,8 @@ impl Keybinding {
         HashMap::from([
             (event(KeyCode::Char('q')), Action::Exit),
             (event(KeyCode::Char('m')), Action::ToggleMute),
+            // `t` for "toggle hide": toggles hiding the selected item for
+            // this instance only.
             (event(KeyCode::Char('t')), Action::ToggleHiddenInstance),
             (event(KeyCode::Char('d')), Action::SetDefault),
             (event(KeyCode::Char('l')), Action::SetRelativeVolume(0.01)),

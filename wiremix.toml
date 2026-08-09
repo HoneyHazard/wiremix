@@ -124,8 +124,8 @@ keybindings = [
  { key = { Char = "q" }, action = "Exit" },
  # Toggle mute for the selected item
  { key = { Char = "m" }, action = "ToggleMute" },
- # Hide/show the selected item for this instance only (not saved, not
- # synced to other instances)
+ # "t" for "toggle hide": hide/show the selected item for this instance
+ # only (not saved, not synced to other instances)
  { key = { Char = "t" }, action = "ToggleHiddenInstance" },
  # Make the selected item in Input/Output Devices the default endpoint
  { key = { Char = "d" }, action = "SetDefault" },
