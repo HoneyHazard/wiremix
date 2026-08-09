@@ -419,14 +419,16 @@ impl<'a> App<'a> {
         self.recompute_hidden_permanent();
         self.state_dirty = true;
 
-        let need_to_stop: Vec<_> = self
-            .capturing_objects
-            .iter()
-            .copied()
-            .filter(|id| self.hidden_permanent.contains(id))
-            .collect();
-        for object_id in need_to_stop {
-            self.stop_capture(object_id);
+        if !self.config.capture_hidden {
+            let need_to_stop: Vec<_> = self
+                .capturing_objects
+                .iter()
+                .copied()
+                .filter(|id| self.hidden_permanent.contains(id))
+                .collect();
+            for object_id in need_to_stop {
+                self.stop_capture(object_id);
+            }
         }
 
         let need_to_start: Vec<_> = self
@@ -651,10 +653,11 @@ impl<'a> App<'a> {
         // hidden_permanent (see Self::run's "wait until ready" loop), so
         // relying on the cache here would let an already-permanently-
         // hidden node start capturing anyway on every fresh launch.
-        if self
-            .hidden_permanent_matchers
-            .iter()
-            .any(|matcher| matcher.matches(&self.state, node))
+        if !self.config.capture_hidden
+            && self
+                .hidden_permanent_matchers
+                .iter()
+                .any(|matcher| matcher.matches(&self.state, node))
         {
             return;
         }
@@ -1105,12 +1108,20 @@ impl Handle for Action {
                     app.recompute_hidden_permanent();
 
                     if app.hidden_permanent.contains(&object_id) {
-                        app.stop_capture(object_id);
+                        // See the equivalent comment in ToggleHiddenInstance
+                        // above.
+                        if !app.config.capture_hidden {
+                            app.stop_capture(object_id);
+                        }
                         // Release the selection - see the equivalent
                         // comment in ToggleHiddenInstance above.
                         current_list!(app)
                             .release_hidden_selection(&app.view, object_id);
-                    } else if app.capturable_objects.contains(&object_id) {
+                    } else if !app.config.capture_hidden
+                        && app.capturable_objects.contains(&object_id)
+                    {
+                        // See the equivalent comment in
+                        // ToggleHiddenInstance above.
                         app.start_capture(object_id);
                     }
 
@@ -2351,6 +2362,7 @@ mod tests {
         let commands = RefCell::new(VecDeque::new());
         let wirehose = mock::WirehoseHandle::with_commands(&commands);
         let mut app = fixture(&wirehose);
+        app.config.capture_hidden = false;
         let id = ObjectId::from_raw_id(0);
 
         app.capturable_objects.insert(id);
@@ -2372,6 +2384,7 @@ mod tests {
         let commands = RefCell::new(VecDeque::new());
         let wirehose = mock::WirehoseHandle::with_commands(&commands);
         let mut app = fixture(&wirehose);
+        app.config.capture_hidden = false;
         let id = ObjectId::from_raw_id(0);
 
         Action::ToggleHiddenPermanent.handle(&mut app).unwrap();
@@ -2393,11 +2406,31 @@ mod tests {
     }
 
     #[test]
+    fn toggle_hidden_permanent_hiding_keeps_capture_by_default() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let mut app = fixture(&wirehose);
+        let id = ObjectId::from_raw_id(0);
+
+        app.capturable_objects.insert(id);
+        app.capturing_objects.insert(id);
+        commands.borrow_mut().clear();
+
+        Action::ToggleHiddenPermanent.handle(&mut app).unwrap();
+
+        assert!(app.hidden_permanent.contains(&id));
+        assert!(app.capturing_objects.contains(&id));
+        assert!(commands.borrow().is_empty());
+    }
+
+    #[test]
     fn start_capture_skips_hidden_permanent_objects() {
         let commands = RefCell::new(VecDeque::new());
         let wirehose = mock::WirehoseHandle::with_commands(&commands);
         let (_, event_rx) = mpsc::channel();
-        let config = Config::from_toml_str("lazy_capture = false");
+        let config = Config::from_toml_str(
+            "lazy_capture = false\ncapture_hidden = false",
+        );
         let mut app = App::new(&wirehose, event_rx, config);
 
         let id = ObjectId::from_raw_id(1);
@@ -2487,6 +2520,7 @@ mod tests {
         let commands = RefCell::new(VecDeque::new());
         let wirehose = mock::WirehoseHandle::with_commands(&commands);
         let mut app = fixture(&wirehose);
+        app.config.capture_hidden = false;
         let id = ObjectId::from_raw_id(0);
         let path = hidden_state_test_path();
         app.hidden_state_path = Some(path.clone());
@@ -2507,6 +2541,32 @@ mod tests {
             commands.borrow_mut().pop_front(),
             Some(mock::MockCommand::NodeCaptureStop(id))
         );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn apply_file_hidden_state_change_keeps_capture_by_default() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let mut app = fixture(&wirehose);
+        let id = ObjectId::from_raw_id(0);
+        let path = hidden_state_test_path();
+        app.hidden_state_path = Some(path.clone());
+        app.capturable_objects.insert(id);
+        app.capturing_objects.insert(id);
+        commands.borrow_mut().clear();
+
+        let hidden_state = HiddenState {
+            hidden: vec![MatchCondition::from_node_name("Node name")],
+        };
+        hidden_state.save(&path).unwrap();
+
+        app.apply_file_hidden_state_change();
+
+        assert!(app.hidden_permanent.contains(&id));
+        assert!(app.capturing_objects.contains(&id));
+        assert!(commands.borrow().is_empty());
 
         let _ = std::fs::remove_file(&path);
     }
