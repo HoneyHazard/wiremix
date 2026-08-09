@@ -36,6 +36,8 @@ pub struct Config {
     pub peaks: Peaks,
     pub char_set: CharSet,
     pub theme: Theme,
+    pub row_selected_extend_above: bool,
+    pub row_selected_extend_below: bool,
     pub max_volume_percent: f32,
     pub enforce_max_volume: bool,
     pub keybindings: HashMap<KeyEvent, Action>,
@@ -66,6 +68,10 @@ struct ConfigFile {
     char_set: String,
     #[serde(default = "default_theme_name")]
     theme: String,
+    #[serde(default = "default_row_selected_extend")]
+    row_selected_extend_above: bool,
+    #[serde(default = "default_row_selected_extend")]
+    row_selected_extend_below: bool,
     #[serde(default = "default_max_volume_percent")]
     max_volume_percent: Option<f32>,
     #[serde(default = "default_enforce_max_volume")]
@@ -197,6 +203,8 @@ pub struct Theme {
     pub meter_center_active: Style,
     pub config_device: Style,
     pub config_profile: Style,
+    pub row_selected: Style,
+    pub row_unselected: Style,
     pub dropdown_icon: Style,
     pub dropdown_border: Style,
     pub dropdown_item: Style,
@@ -271,6 +279,10 @@ fn default_enforce_max_volume() -> bool {
 }
 
 fn default_lazy_capture() -> bool {
+    false
+}
+
+fn default_row_selected_extend() -> bool {
     false
 }
 
@@ -405,6 +417,8 @@ impl TryFrom<ConfigFile> for Config {
             enforce_max_volume: config_file.enforce_max_volume,
             char_set,
             theme,
+            row_selected_extend_above: config_file.row_selected_extend_above,
+            row_selected_extend_below: config_file.row_selected_extend_below,
             keybindings: config_file.keybindings,
             help,
             names: config_file.names,
@@ -487,6 +501,8 @@ pub mod strict {
         peaks: Option<Peaks>,
         char_set: String,
         theme: String,
+        row_selected_extend_above: bool,
+        row_selected_extend_below: bool,
         max_volume_percent: Option<f32>,
         enforce_max_volume: bool,
         #[serde(deserialize_with = "keybindings")]
@@ -513,6 +529,8 @@ pub mod strict {
                 peaks: strict.peaks,
                 char_set: strict.char_set,
                 theme: strict.theme,
+                row_selected_extend_above: strict.row_selected_extend_above,
+                row_selected_extend_below: strict.row_selected_extend_below,
                 max_volume_percent: strict.max_volume_percent,
                 enforce_max_volume: strict.enforce_max_volume,
                 keybindings: strict.keybindings,

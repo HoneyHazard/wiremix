@@ -29,6 +29,14 @@ char_set = "default"
 # Theme to use (see Themes section)
 theme = "default"
 
+# If true, the selected row's background (and, if the current theme sets
+# row_selected, its selector marker) extends one row above and/or below
+# the row itself, into the gap between items. No effect unless the
+# theme's row_selected is also set to something other than the default
+# empty style.
+row_selected_extend_above = false
+row_selected_extend_below = false
+
 # Initial tab
 tab = "playback"
 
@@ -370,6 +378,26 @@ meter_center_active = { fg = "LightGreen" }
 config_device = { }
 # The name of the selected profile in the Configuration tab
 config_profile = { }
+# Fills the selected row's whole background (in the Playback/Recording/
+# Output/Input Devices and Configuration tabs), not just its text - see
+# row_selected_extend_above/_below above for extending this into the gap
+# above/below the row too. Empty ({ }) by default, i.e. no extra
+# highlight beyond the selector column.
+row_selected = { }
+# Patched on top of an unselected row's own text styles (node_title,
+# node_target, volume, the "muted" label, config_device, config_profile).
+# Those styles are normally the same regardless of selection - this is
+# the only way to make non-selected rows look different from selected
+# ones by text color, complementing row_selected's own highlight (e.g.
+# dim everything else so the selected row stands out by contrast from
+# both directions, not just because it's brighter). Only whichever of
+# fg/bg/add_modifier you set here override the base style, so it layers
+# on top rather than replacing it. Unlike row_selected, this only
+# affects text, not the row's full background - useful for a faint tint
+# that distinguishes item rows from the gaps between them without
+# competing with the selected row's highlight. Empty ({ }) by default,
+# i.e. no change from an item's normal look.
+row_unselected = { }
 # Dropdown marker next to the profiles in the Configuration tab
 dropdown_icon = { }
 # Border around dropdowns
@@ -486,6 +514,8 @@ meter_center_inactive = { add_modifier = "DIM" }
 meter_center_active = { add_modifier = "BOLD" }
 config_device = { }
 config_profile = { }
+row_selected = { }
+row_unselected = { }
 dropdown_icon = { }
 dropdown_border = { }
 dropdown_item = { }
@@ -515,6 +545,8 @@ meter_center_inactive = { }
 meter_center_active = { }
 config_device = { }
 config_profile = { }
+row_selected = { }
+row_unselected = { }
 dropdown_icon = { }
 dropdown_border = { }
 dropdown_item = { }

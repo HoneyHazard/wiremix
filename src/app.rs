@@ -1130,6 +1130,8 @@ mod tests {
             filters: Default::default(),
             max_concurrent_captures: Default::default(),
             max_concurrent_captures_global: Default::default(),
+            row_selected_extend_above: Default::default(),
+            row_selected_extend_below: Default::default(),
         };
 
         let mut app = App::new(wirehose, event_rx, config);
@@ -1233,6 +1235,8 @@ mod tests {
             filters: Default::default(),
             max_concurrent_captures: Default::default(),
             max_concurrent_captures_global: Default::default(),
+            row_selected_extend_above: Default::default(),
+            row_selected_extend_below: Default::default(),
         };
         let mut app = App::new(&wirehose, event_rx, config);
 

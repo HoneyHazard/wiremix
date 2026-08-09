@@ -5,6 +5,7 @@ use std::collections::HashSet;
 
 use ratatui::{
     prelude::{Alignment, Buffer, Constraint, Direction, Layout, Rect},
+    style::Style,
     text::{Line, Span},
     widgets::{ListState, StatefulWidget, Widget},
 };
@@ -386,9 +387,92 @@ pub struct ObjectListWidget<'a, 'b> {
 }
 
 struct ObjectListRenderContext<'a> {
+    header_area: Rect,
     list_area: Rect,
+    footer_area: Rect,
     objects_layout: &'a [Rect],
     objects_visible: usize,
+}
+
+/// Extends a selected row's `row_selected` background one row above
+/// and/or one row below it (independently, per `row_selected_extend_above`/
+/// `row_selected_extend_below`), so the highlight doesn't cut off abruptly
+/// right at the row's own edges. Clipped to `above_clip`/`below_clip`
+/// respectively so it can never bleed into a neighboring item.
+///
+/// For most objects both clip areas are just `list_area`, but the very
+/// first/last object in the whole list has no list row of its own to
+/// extend into on that side - the row directly above the first object (or
+/// below the last) is `header_area`/`footer_area`, a different `Rect`
+/// reserved for the scroll indicator. Callers pass a clip area that
+/// includes the header/footer specifically for that edge object, but only
+/// when the corresponding scroll indicator isn't being drawn there (see
+/// the call sites in `render_node_list`/`render_device_list`) - otherwise
+/// the highlight would paint over the "more items" indicator.
+///
+/// Also extends the selector marker (the left gutter column) to match,
+/// reusing the `selector_middle` glyph for the extra row - but only when
+/// `row_selected` is actually customized away from the default empty
+/// `{ }`. Drawing extra marker glyphs is real cell content, not a style
+/// patch, so unlike the background fill (where an empty Style is
+/// naturally a no-op via `Cell::set_style`'s `Some(..)`-only overwrite),
+/// it can't rely on being inert by default - it needs its own explicit
+/// check so the marker's height stays exactly what it's always been for
+/// every theme that doesn't opt into `row_selected`.
+///
+/// Both `row_selected_extend_above`/`_below` default to `false`, so this
+/// whole function is a no-op - no size or height change to the marker or
+/// background - unless a config explicitly turns one or both on.
+fn extend_selected_row(
+    buf: &mut Buffer,
+    config: &Config,
+    object_area: Rect,
+    above_clip: Rect,
+    below_clip: Rect,
+    spacing: u16,
+) {
+    let max_extend = spacing.min(1);
+
+    let extend_one_side = |buf: &mut Buffer, y: u16, clip: Rect| {
+        let extend_area = Rect {
+            x: object_area.x,
+            y,
+            width: object_area.width,
+            height: max_extend,
+        };
+        let clipped = clip.intersection(extend_area);
+        buf.set_style(clipped, config.theme.row_selected);
+
+        if config.theme.row_selected == Style::default() {
+            return;
+        }
+
+        let marker_area = Rect {
+            width: 1,
+            ..extend_area
+        };
+        Line::from(Span::styled(
+            &config.char_set.selector_middle,
+            config.theme.selector,
+        ))
+        .render(clip.intersection(marker_area), buf);
+    };
+
+    if config.row_selected_extend_above {
+        extend_one_side(
+            buf,
+            object_area.y.saturating_sub(max_extend),
+            above_clip,
+        );
+    }
+
+    if config.row_selected_extend_below {
+        extend_one_side(
+            buf,
+            object_area.y.saturating_add(object_area.height),
+            below_clip,
+        );
+    }
 }
 
 impl ObjectListWidget<'_, '_> {
@@ -401,6 +485,7 @@ impl ObjectListWidget<'_, '_> {
         mouse_areas: &mut Vec<MouseArea>,
     ) {
         let all_objects = self.view.full_nodes(node_kind);
+        let total_objects = all_objects.len();
         let objects = all_objects
             .iter()
             .skip(self.object_list.top)
@@ -410,7 +495,8 @@ impl ObjectListWidget<'_, '_> {
 
         let objects_and_areas: Vec<(&&view::Node, &Rect)> =
             objects.zip(context.objects_layout.iter()).collect();
-        for (object, &object_area) in &objects_and_areas {
+        for (i, (object, &object_area)) in objects_and_areas.iter().enumerate()
+        {
             let selected = self
                 .object_list
                 .selected
@@ -423,6 +509,32 @@ impl ObjectListWidget<'_, '_> {
                 selected,
             )
             .render(object_area, buf, mouse_areas);
+
+            if selected {
+                // No scroll-up indicator competing for header_area when
+                // this is truly the first object in the list (not just
+                // the first one currently visible) - safe to extend into
+                // it. Same idea for footer_area/the last object below.
+                let above_clip = if i == 0 && self.object_list.top == 0 {
+                    context.header_area.union(context.list_area)
+                } else {
+                    context.list_area
+                };
+                let below_clip =
+                    if self.object_list.top + i + 1 == total_objects {
+                        context.list_area.union(context.footer_area)
+                    } else {
+                        context.list_area
+                    };
+                extend_selected_row(
+                    buf,
+                    self.config,
+                    object_area,
+                    above_clip,
+                    below_clip,
+                    NodeWidget::spacing(),
+                );
+            }
         }
 
         // Show the target dropdown?
@@ -458,6 +570,7 @@ impl ObjectListWidget<'_, '_> {
         mouse_areas: &mut Vec<MouseArea>,
     ) {
         let all_objects = self.view.full_devices();
+        let total_objects = all_objects.len();
         let objects = all_objects
             .iter()
             .skip(self.object_list.top)
@@ -467,7 +580,8 @@ impl ObjectListWidget<'_, '_> {
 
         let objects_and_areas: Vec<(&&view::Device, &Rect)> =
             objects.zip(context.objects_layout.iter()).collect();
-        for (object, &object_area) in &objects_and_areas {
+        for (i, (object, &object_area)) in objects_and_areas.iter().enumerate()
+        {
             let selected = self
                 .object_list
                 .selected
@@ -478,6 +592,29 @@ impl ObjectListWidget<'_, '_> {
                 buf,
                 mouse_areas,
             );
+
+            if selected {
+                // See the matching comment in render_node_list().
+                let above_clip = if i == 0 && self.object_list.top == 0 {
+                    context.header_area.union(context.list_area)
+                } else {
+                    context.list_area
+                };
+                let below_clip =
+                    if self.object_list.top + i + 1 == total_objects {
+                        context.list_area.union(context.footer_area)
+                    } else {
+                        context.list_area
+                    };
+                extend_selected_row(
+                    buf,
+                    self.config,
+                    object_area,
+                    above_clip,
+                    below_clip,
+                    DeviceWidget::spacing(),
+                );
+            }
         }
 
         // Show the target dropdown?
@@ -601,7 +738,9 @@ impl StatefulWidget for &mut ObjectListWidget<'_, '_> {
                 self.render_node_list(
                     node_kind,
                     ObjectListRenderContext {
+                        header_area,
                         list_area,
+                        footer_area,
                         objects_layout: &objects_layout,
                         objects_visible,
                     },
@@ -613,7 +752,9 @@ impl StatefulWidget for &mut ObjectListWidget<'_, '_> {
             ListKind::Device => {
                 self.render_device_list(
                     ObjectListRenderContext {
+                        header_area,
                         list_area,
+                        footer_area,
                         objects_layout: &objects_layout,
                         objects_visible,
                     },
@@ -1286,5 +1427,84 @@ mod tests {
         let visible = object_list.visible_objects(&rect, &view);
         assert!(visible.contains(&stream_id));
         assert!(visible.contains(&source_id));
+    }
+
+    #[test]
+    fn extend_selected_row_above_reaches_into_widened_clip() {
+        let config = config::Config::from_toml_str(
+            "row_selected_extend_above = true\n\
+             [themes.default]\n\
+             row_selected = { bg = \"Blue\" }",
+        );
+        let object_area = Rect::new(0, 1, 20, 3);
+        // The row directly above object_area (y = 0) - out of bounds for
+        // list_area (which starts at object_area's own top edge, as it
+        // does for the first visible object), but in bounds once widened
+        // to include header_area, matching what render_node_list()/
+        // render_device_list() pass for the true first object in the list.
+        let list_area = Rect::new(0, 1, 20, 10);
+        let widened = Rect::new(0, 0, 20, 11);
+        let blank = Buffer::empty(Rect::new(0, 0, 20, 11));
+
+        let mut buf = blank.clone();
+        extend_selected_row(
+            &mut buf,
+            &config,
+            object_area,
+            list_area,
+            list_area,
+            NodeWidget::spacing(),
+        );
+        assert_eq!(buf[(0, 0)].style(), blank[(0, 0)].style());
+
+        let mut buf = blank.clone();
+        extend_selected_row(
+            &mut buf,
+            &config,
+            object_area,
+            widened,
+            list_area,
+            NodeWidget::spacing(),
+        );
+        assert_ne!(buf[(0, 0)].style(), blank[(0, 0)].style());
+    }
+
+    #[test]
+    fn extend_selected_row_below_reaches_into_widened_clip() {
+        let config = config::Config::from_toml_str(
+            "row_selected_extend_below = true\n\
+             [themes.default]\n\
+             row_selected = { bg = \"Blue\" }",
+        );
+        let object_area = Rect::new(0, 0, 20, 3);
+        // The row directly below object_area (y = 3) - out of bounds for
+        // a list_area that ends exactly at object_area's bottom edge, as
+        // it does for the true last object in the list, but in bounds once
+        // widened to include footer_area.
+        let list_area = Rect::new(0, 0, 20, 3);
+        let widened = Rect::new(0, 0, 20, 4);
+        let blank = Buffer::empty(Rect::new(0, 0, 20, 4));
+
+        let mut buf = blank.clone();
+        extend_selected_row(
+            &mut buf,
+            &config,
+            object_area,
+            list_area,
+            list_area,
+            NodeWidget::spacing(),
+        );
+        assert_eq!(buf[(0, 3)].style(), blank[(0, 3)].style());
+
+        let mut buf = blank.clone();
+        extend_selected_row(
+            &mut buf,
+            &config,
+            object_area,
+            list_area,
+            widened,
+            NodeWidget::spacing(),
+        );
+        assert_ne!(buf[(0, 3)].style(), blank[(0, 3)].style());
     }
 }
