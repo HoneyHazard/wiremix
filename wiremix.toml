@@ -86,6 +86,14 @@ lazy_capture = false
 # independently, so whichever is more restrictive applies.
 #max_concurrent_captures_global = 8
 
+# If false, hidden items are excluded from peak monitoring - an additional
+# filter on top of lazy_capture and any other capture limits, not a
+# replacement for them. When monitoring is excluded this way, the peak
+# meter is left blank for that item rather than showing an inactive-looking
+# placeholder. True by default, meaning hidden items follow the same
+# monitoring rules as regular ones.
+capture_hidden = true
+
 
 # Keybindings
 #

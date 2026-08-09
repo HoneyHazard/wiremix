@@ -49,6 +49,7 @@ pub struct Config {
     pub lazy_capture: bool,
     pub max_concurrent_captures: Option<usize>,
     pub max_concurrent_captures_global: Option<usize>,
+    pub capture_hidden: bool,
     pub filters: Vec<MatchCondition>,
 }
 
@@ -101,6 +102,8 @@ struct ConfigFile {
     lazy_capture: bool,
     max_concurrent_captures: Option<usize>,
     max_concurrent_captures_global: Option<usize>,
+    #[serde(default = "default_capture_hidden")]
+    capture_hidden: bool,
     #[serde(default = "Filter::defaults", deserialize_with = "Filter::merge")]
     filters: Vec<Filter>,
 }
@@ -297,6 +300,10 @@ fn default_show_dividers() -> bool {
     false
 }
 
+fn default_capture_hidden() -> bool {
+    true
+}
+
 impl ConfigFile {
     /// Override configuration with command-line arguments.
     pub fn apply_opt(&mut self, opt: &Opt) {
@@ -374,6 +381,14 @@ impl ConfigFile {
         if opt.show_dividers {
             self.show_dividers = true;
         }
+
+        if opt.no_capture_hidden {
+            self.capture_hidden = false;
+        }
+
+        if opt.capture_hidden {
+            self.capture_hidden = true;
+        }
     }
 }
 
@@ -448,6 +463,7 @@ impl TryFrom<ConfigFile> for Config {
             max_concurrent_captures: config_file.max_concurrent_captures,
             max_concurrent_captures_global: config_file
                 .max_concurrent_captures_global,
+            capture_hidden: config_file.capture_hidden,
             filters,
         })
     }
@@ -538,6 +554,7 @@ pub mod strict {
         lazy_capture: bool,
         max_concurrent_captures: Option<usize>,
         max_concurrent_captures_global: Option<usize>,
+        capture_hidden: bool,
         filters: Vec<Filter>,
     }
 
@@ -565,6 +582,7 @@ pub mod strict {
                 max_concurrent_captures: strict.max_concurrent_captures,
                 max_concurrent_captures_global: strict
                     .max_concurrent_captures_global,
+                capture_hidden: strict.capture_hidden,
                 filters: strict.filters,
             }
         }

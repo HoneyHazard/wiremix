@@ -489,7 +489,9 @@ impl<'a> App<'a> {
             }
         }
 
-        if self.hidden_instance.contains(&object_id) {
+        if !self.config.capture_hidden
+            && self.hidden_instance.contains(&object_id)
+        {
             return;
         }
 
@@ -885,16 +887,24 @@ impl Handle for Action {
                         // is still looking at this item), but nothing
                         // proactively resumes a capture just because
                         // eligibility didn't change, so re-trigger it
-                        // here if it's still capturable.
-                        if app.capturable_objects.contains(&object_id) {
+                        // here if it's still capturable. Skipped when
+                        // capture_hidden is on, since the capture was
+                        // never stopped in the first place.
+                        if !app.config.capture_hidden
+                            && app.capturable_objects.contains(&object_id)
+                        {
                             app.start_capture(object_id);
                         }
                     } else {
                         app.hidden_instance.insert(object_id);
                         // start_capture()'s hidden_instance check only
                         // blocks new captures - an already-running one
-                        // needs to be stopped explicitly here.
-                        app.stop_capture(object_id);
+                        // needs to be stopped explicitly here. Skipped
+                        // when capture_hidden is on, since hidden items
+                        // should keep being monitored like regular ones.
+                        if !app.config.capture_hidden {
+                            app.stop_capture(object_id);
+                        }
                         // Release the selection rather than leave it
                         // pinned to an item that's about to sink to the
                         // bottom of the list - move it to whatever's
@@ -1180,6 +1190,7 @@ mod tests {
             tab: 0,
             tabs: vec![TabKind::Playback],
             lazy_capture: Default::default(),
+            capture_hidden: true,
             filters: Default::default(),
             max_concurrent_captures: Default::default(),
             max_concurrent_captures_global: Default::default(),
@@ -1320,6 +1331,7 @@ mod tests {
                 TabKind::Configuration,
             ],
             lazy_capture: Default::default(),
+            capture_hidden: true,
             filters: Default::default(),
             max_concurrent_captures: Default::default(),
             max_concurrent_captures_global: Default::default(),
@@ -1932,6 +1944,7 @@ mod tests {
         let commands = RefCell::new(VecDeque::new());
         let wirehose = mock::WirehoseHandle::with_commands(&commands);
         let mut app = fixture(&wirehose);
+        app.config.capture_hidden = false;
         let id = ObjectId::from_raw_id(0);
 
         app.capturable_objects.insert(id);
@@ -1953,6 +1966,7 @@ mod tests {
         let commands = RefCell::new(VecDeque::new());
         let wirehose = mock::WirehoseHandle::with_commands(&commands);
         let mut app = fixture(&wirehose);
+        app.config.capture_hidden = false;
         let id = ObjectId::from_raw_id(0);
 
         app.hidden_instance.insert(id);
@@ -1970,11 +1984,43 @@ mod tests {
     }
 
     #[test]
+    fn toggle_hidden_instance_hiding_keeps_capture_by_default() {
+        // capture_hidden defaults to true - hiding an item shouldn't stop
+        // an already-running capture, and shouldn't try to start a
+        // redundant one either.
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let mut app = fixture(&wirehose);
+        let id = ObjectId::from_raw_id(0);
+
+        app.capturable_objects.insert(id);
+        app.capturing_objects.insert(id);
+        commands.borrow_mut().clear();
+
+        Action::ToggleHiddenInstance.handle(&mut app).unwrap();
+
+        assert!(app.hidden_instance.contains(&id));
+        assert!(app.capturing_objects.contains(&id));
+        assert!(commands.borrow().is_empty());
+
+        // Hiding released the selection (only object in the list) -
+        // re-select it before toggling again.
+        Action::SelectObject(id).handle(&mut app).unwrap();
+        Action::ToggleHiddenInstance.handle(&mut app).unwrap();
+
+        assert!(!app.hidden_instance.contains(&id));
+        assert!(app.capturing_objects.contains(&id));
+        assert!(commands.borrow().is_empty());
+    }
+
+    #[test]
     fn start_capture_skips_hidden_instance_objects() {
         let commands = RefCell::new(VecDeque::new());
         let wirehose = mock::WirehoseHandle::with_commands(&commands);
         let (_, event_rx) = mpsc::channel();
-        let config = Config::from_toml_str("lazy_capture = false");
+        let config = Config::from_toml_str(
+            "lazy_capture = false\ncapture_hidden = false",
+        );
         let mut app = App::new(&wirehose, event_rx, config);
 
         let id = ObjectId::from_raw_id(1);
@@ -1990,5 +2036,30 @@ mod tests {
         assert!(app.capturable_objects.contains(&id));
         assert!(!app.capturing_objects.contains(&id));
         assert!(commands.borrow().is_empty());
+    }
+
+    #[test]
+    fn start_capture_includes_hidden_instance_objects_by_default() {
+        let commands = RefCell::new(VecDeque::new());
+        let wirehose = mock::WirehoseHandle::with_commands(&commands);
+        let (_, event_rx) = mpsc::channel();
+        let config = Config::from_toml_str("lazy_capture = false");
+        let mut app = App::new(&wirehose, event_rx, config);
+
+        let id = ObjectId::from_raw_id(1);
+        add_capturable_node(&mut app, id);
+        app.capturing_objects.clear();
+        app.capturable_objects.clear();
+        app.hidden_instance.insert(id);
+        commands.borrow_mut().clear();
+
+        app.set_capture_eligibility(CaptureEligibility::Eligible(id));
+
+        assert!(app.capturable_objects.contains(&id));
+        assert!(app.capturing_objects.contains(&id));
+        assert_eq!(
+            commands.borrow_mut().pop_front(),
+            Some(mock::MockCommand::NodeCaptureStart(id))
+        );
     }
 }
